@@ -1,0 +1,5 @@
+{
+  "name": "Academia AI: Academic Copilot",
+  "description": "A unified project-based academic copilot featuring RAG-powered AI chat, document analysis, smart quizzes, flashcards, and knowledge mapping.",
+  "requestFramePermissions": ["notifications"]
+}

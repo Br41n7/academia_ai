@@ -1,0 +1,251 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A study project workspace.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "user_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "user_id"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "A study document (PDF, text, etc.).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "source_type": { "type": "string" },
+        "user_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "user_id", "project_id"]
+    },
+    "DocumentChunk": {
+      "title": "DocumentChunk",
+      "description": "A chunk of a document with its embedding for RAG.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "document_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "content": { "type": "string" },
+        "embedding": { "type": "array", "items": { "type": "number" } },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["document_id", "project_id", "content", "embedding"]
+    },
+    "Mnemonic": {
+      "title": "Mnemonic",
+      "description": "A saved mnemonic memory aid.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "concept": { "type": "string" },
+        "mnemonic": { "type": "string" },
+        "style": { "type": "string" },
+        "user_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["concept", "mnemonic", "user_id", "project_id"]
+    },
+    "QuizAttempt": {
+      "title": "QuizAttempt",
+      "description": "A record of a quiz attempt.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "score": { "type": "number" },
+        "total_questions": { "type": "number" },
+        "user_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["project_id", "score", "total_questions", "user_id"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "A user-created note or AI-generated summary.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "source_type": { "type": "string" },
+        "user_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "user_id", "project_id"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "A record of an AI chat interaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "original_query": { "type": "string" },
+        "response": { "type": "string" },
+        "citations": { "type": "array", "items": { "type": "object" } },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "project_id", "original_query", "response"]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "A record of a full exam attempt.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "exam_id": { "type": "string" },
+        "score": { "type": "number" },
+        "total_questions": { "type": "number" },
+        "answers": { "type": "object" },
+        "analysis": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["project_id", "user_id", "score", "total_questions"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "An AI-generated course structure.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "modules": { "type": "array", "items": { "type": "object" } },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["project_id", "title", "modules"]
+    },
+    "CourseProgress": {
+      "title": "CourseProgress",
+      "description": "User progress through a course.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "course_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "completed_lessons": { "type": "array", "items": { "type": "string" } },
+        "quiz_scores": { "type": "object" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["course_id", "user_id"]
+    },
+    "Profile": {
+      "title": "Profile",
+      "description": "User profile and gamification data.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "full_name": { "type": "string" },
+        "avatar_url": { "type": "string" },
+        "points": { "type": "number" },
+        "study_streak": { "type": "number" },
+        "badges": { "type": "array", "items": { "type": "string" } },
+        "last_active_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id"]
+    },
+    "StudyReminder": {
+      "title": "StudyReminder",
+      "description": "A reminder for a future study session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "topic": { "type": "string" },
+        "scheduled_time": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "sent", "cancelled"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "project_id", "topic", "scheduled_time", "status"]
+    },
+    "SavedQuestion": {
+      "title": "SavedQuestion",
+      "description": "A quiz question saved by the user for later review.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "project_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["multiple_choice", "true_false", "fill_blank"] },
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "correct_answer": { "type": "string" },
+        "explanation": { "type": "string" },
+        "saved_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["project_id", "user_id", "type", "question", "correct_answer", "explanation", "saved_at"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "User study projects."
+    },
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "Study documents."
+    },
+    "/document_chunks/{chunkId}": {
+      "schema": "DocumentChunk",
+      "description": "Embeddings for document chunks."
+    },
+    "/mnemonics/{mnemonicId}": {
+      "schema": "Mnemonic",
+      "description": "Saved mnemonics."
+    },
+    "/quiz_attempts/{attemptId}": {
+      "schema": "QuizAttempt",
+      "description": "Quiz results."
+    },
+    "/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Project notes."
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "AI chat history."
+    },
+    "/exam_attempts/{attemptId}": {
+      "schema": "ExamAttempt",
+      "description": "Exam results."
+    },
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Generated courses."
+    },
+    "/course_progress/{progressId}": {
+      "schema": "CourseProgress",
+      "description": "User course progress."
+    },
+    "/profiles/{profileId}": {
+      "schema": "Profile",
+      "description": "User profiles."
+    },
+    "/reminders/{reminderId}": {
+      "schema": "StudyReminder",
+      "description": "Study reminders."
+    },
+    "/saved_questions/{questionId}": {
+      "schema": "SavedQuestion",
+      "description": "Questions saved for review."
+    }
+  }
+}
