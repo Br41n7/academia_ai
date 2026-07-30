@@ -30,8 +30,9 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Initialize GoogleGenAI securely on the server side
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// Safe initialization of GoogleGenAI securely on the server side (with demo/fallback key protection)
+const hasGeminiKey = !!process.env.GEMINI_API_KEY;
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || 'DUMMY_KEY_FOR_LOCAL_RUN' });
 
 // Multer setup for PDF uploads
 const upload = multer({ storage: multer.memoryStorage() });
@@ -52,8 +53,7 @@ async function getProjectContextServer(projectId: string, userId: string) {
     let docs = docsSnapshot.docs.map(d => d.data().content).join('\n\n');
     let notes = notesSnapshot.docs.map(n => n.data().content).join('\n\n');
 
-    // Simple context truncation to prevent hitting LLM prompt size limits or excessive costs
-    const maxChars = 200000; // Safe limit of characters (~50k tokens)
+    const maxChars = 200000;
     if (docs.length > maxChars) {
       docs = docs.substring(0, maxChars) + "\n\n[CONTEXT TRUNCATED DUE TO SIZE LIMITS]";
     }
@@ -73,124 +73,19 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// 1. Upload PDF/Text and Extract Text
-app.post("/api/documents/upload", upload.single('file'), async (req, res) => {
-  try {
-    const { user_id, project_id } = req.body;
-    const file = req.file;
-
-    if (!file) throw new Error("No file uploaded");
-
-    let text = "";
-    const title = file.originalname;
-    const extension = path.extname(title).toLowerCase();
-
-    if (extension === '.pdf') {
-      const data = await pdf(file.buffer);
-      text = data.text;
-    } else if (extension === '.txt') {
-      text = file.buffer.toString('utf-8');
-    } else {
-      throw new Error("Unsupported file type. Please upload a PDF or TXT file.");
-    }
-
-    // Save Document to Firestore
-    const docRef = db.collection('documents').doc();
-    const document = {
-      id: docRef.id,
-      title,
-      content: text,
-      source_type: extension.substring(1),
-      user_id,
-      project_id,
-      created_at: admin.firestore.FieldValue.serverTimestamp()
-    };
-    await docRef.set(document);
-
-    res.json(document);
-  } catch (error: any) {
-    console.error("Upload error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 2. Import Google Doc via URL
-app.post("/api/documents/import-url", async (req, res) => {
-  try {
-    const { url, user_id, project_id } = req.body;
-    if (!url) throw new Error("URL is required");
-
-    let text = "";
-    let title = "Imported Document";
-
-    if (url.includes('docs.google.com/document/d/')) {
-      const docId = url.match(/\/d\/(.*?)(\/|$)/)?.[1];
-      if (!docId) throw new Error("Invalid Google Docs URL");
-      
-      const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
-      const response = await fetch(exportUrl);
-      if (!response.ok) throw new Error("Failed to fetch Google Doc. Make sure it's public or shared with 'Anyone with the link'.");
-      text = await response.text();
-      title = `Google Doc: ${docId}`;
-    } else {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("Failed to fetch URL");
-      text = await response.text();
-      text = text.replace(/<[^>]*>?/gm, '');
-      title = `Web Page: ${new URL(url).hostname}`;
-    }
-
-    // Save Document to Firestore
-    const docRef = db.collection('documents').doc();
-    const document = {
-      id: docRef.id,
-      title,
-      content: text,
-      source_type: 'url',
-      user_id,
-      project_id,
-      created_at: admin.firestore.FieldValue.serverTimestamp()
-    };
-    await docRef.set(document);
-
-    res.json(document);
-  } catch (error: any) {
-    console.error("URL Import error:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 3. YouTube Transcript
-app.post("/api/youtube/transcript", async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url) throw new Error("YouTube URL is required");
-
-    const videoIdMatch = url.match(/(?:v=|\/v\/|embed\/|youtu\.be\/|\/shorts\/)([^#&?]*).*/);
-    const videoId = videoIdMatch ? videoIdMatch[1] : url;
-
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    const text = transcript.map(t => t.text).join(" ");
-    
-    res.json({ text });
-  } catch (error: any) {
-    console.error("YouTube error:", error);
-    let message = error.message;
-    if (message.includes('Transcript is disabled')) {
-      message = "Transcripts are disabled for this video.";
-    } else if (message.includes('Could not find transcript')) {
-      message = "Could not find a transcript for this video.";
-    }
-    res.status(500).json({ error: message });
-  }
-});
-
 // Secure AI Endpoints (Moved from Frontend)
 
 app.post("/api/ai/notebook-action", async (req, res) => {
   try {
     const { action, projectId, userQuery, useGrounding, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json({
+        text: `### [Demo Mode] GEMINI_API_KEY is not configured.\nHere is a mock response for action **${action}**:\nThis is a sample text explaining complex topics, summarizing, or answering "${userQuery || ''}" based on your files. Please configure the \`GEMINI_API_KEY\` in your \`.env.local\` file to enable real intelligence!`,
+        sources: [{ title: 'Academic AI Setup Instructions', uri: 'https://ai.studio/apps' }]
+      });
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     let prompt = '';
@@ -245,6 +140,21 @@ app.post("/api/ai/generate-quiz", async (req, res) => {
   try {
     const { topic, difficulty, projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json({
+        questions: [
+          {
+            id: "mock-1",
+            type: "multiple_choice",
+            question: `Demo Question about: ${topic} (${difficulty})`,
+            options: ["Option A (Correct)", "Option B", "Option C", "Option D"],
+            correct_answer: "Option A (Correct)",
+            explanation: "Set the GEMINI_API_KEY environment variable to receive real AI assessments!"
+          }
+        ]
+      });
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Based on the following project context and the specific topic "${topic}", generate a quiz with 5 questions.
@@ -309,6 +219,13 @@ app.post("/api/ai/generate-mnemonic", async (req, res) => {
     const { concept, style, projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
 
+    if (!hasGeminiKey) {
+      return res.json({
+        mnemonic: "P-A-S-S-I-O-N",
+        explanation: `Demo Mnemonic for ${concept} in style ${style}. Define GEMINI_API_KEY to activate actual generation.`
+      });
+    }
+
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Generate a mnemonic for the concept: "${concept}" using the style: "${style}".
     Use the provided project context for additional information if relevant.
@@ -347,6 +264,14 @@ app.post("/api/ai/generate-mnemonic", async (req, res) => {
 app.post("/api/ai/check-plagiarism", async (req, res) => {
   try {
     const { text } = req.body;
+    if (!hasGeminiKey) {
+      return res.json({
+        similarity_score: 5,
+        analysis_summary: "Demo Plagiarism Checker activated. Configure GEMINI_API_KEY for a real analysis.",
+        sources: []
+      });
+    }
+
     const prompt = `Analyze the following text for potential plagiarism or lack of originality. Provide a similarity score and a brief analysis.
 
     TEXT TO ANALYZE:
@@ -410,6 +335,16 @@ app.post("/api/ai/generate-visual", async (req, res) => {
     const { topic, format, projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
 
+    if (!hasGeminiKey) {
+      return res.json({
+        type: 'infographic',
+        title: `Visual Study Guide: ${topic}`,
+        sections: [
+          { title: "Core Premise", content: "Set the GEMINI_API_KEY in .env.local to generate beautiful actual flowcharts, formula cards, and concept comparison sheets.", icon: "Sparkles", color: "#4F46E5" }
+        ]
+      });
+    }
+
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Generate a visual learning aid for the topic: "${topic}" in the format: "${format}".
     Based on the project context, create a structured response in JSON format.
@@ -443,6 +378,25 @@ app.post("/api/ai/generate-exam", async (req, res) => {
   try {
     const { projectId, config, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json({
+        id: "mock-exam-1",
+        title: "Mock Simulated Exam",
+        questions: [
+          {
+            id: "q-1",
+            type: "concept_trap",
+            question: "Sample Misconception Trap: Are API keys safe on standard frontends?",
+            options: ["Yes, modern builds hide them completely.", "No, compiled client code reveals assets and keys easily."],
+            correct_answer: "No, compiled client code reveals assets and keys easily.",
+            explanation: "Frontend JS assets are fully public and readable by client browsers.",
+            concept: "Frontend Security Architecture",
+            trap_details: "Developers often mistakenly assume process.env replacements keep keys safe in final client bundles."
+          }
+        ]
+      });
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Generate a comprehensive exam based on the following project context.
@@ -485,6 +439,20 @@ app.post("/api/ai/generate-exam", async (req, res) => {
 app.post("/api/ai/analyze-exam", async (req, res) => {
   try {
     const { exam, answers } = req.body;
+    if (!hasGeminiKey) {
+      return res.json({
+        overall_performance: "Demo Analysis: Setup GEMINI_API_KEY in .env.local to get customized detailed topic coverage.",
+        topic_mastery: [
+          { topic: "Architecture", score: 85, status: "mastered" }
+        ],
+        weak_concepts: ["Client Key Protection"],
+        strong_concepts: ["Backend Routing"],
+        recommendations: ["Expose keys through backend proxies"],
+        next_steps: ["Ensure all AI tasks route securely through Express controllers."],
+        concept_battles: [{ concepts: ["Client-Side AI", "Server-Side AI"], reason: "Distinguish backend proxy gateways from public browser APIs." }]
+      });
+    }
+
     const prompt = `Analyze the results of an exam.
     Exam: ${JSON.stringify(exam)}
     Answers: ${JSON.stringify(answers)}
@@ -521,6 +489,37 @@ app.post("/api/ai/generate-course-ai", async (req, res) => {
   try {
     const { projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json({
+        id: "demo-course-id",
+        title: "Introduction to Study Material",
+        description: "A dummy structured course module for local testing. Enable GEMINI_API_KEY to generate standard curricula.",
+        modules: [
+          {
+            id: "m-1",
+            title: "Module 1: Foundations",
+            lessons: [
+              {
+                id: "l-1",
+                title: "Lesson 1: Platform Basics",
+                content: "Welcome! To generate a real customized module-by-module structured learning pathway, please specify a valid GEMINI_API_KEY.",
+                practice_questions: [
+                  {
+                    id: "pq-1",
+                    type: "multiple_choice",
+                    question: "What is the primary role of Academic AI?",
+                    options: ["Study Companion", "Gaming Platform"],
+                    correct_answer: "Study Companion",
+                    explanation: "It transforms uploaded notes into modules and structured exams."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      });
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Create a structured course based on this content:
@@ -568,6 +567,10 @@ app.post("/api/ai/generate-study-guide", async (req, res) => {
     const { projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
 
+    if (!hasGeminiKey) {
+      return res.json({ text: "### Study Guide (Demo Mode)\n\n* Please configure your \`GEMINI_API_KEY\` in your \`.env.local\` file to generate professional, full-length, grounded study guides." });
+    }
+
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Based on the following project context, generate a comprehensive study guide.
     The study guide should include:
@@ -597,6 +600,17 @@ app.post("/api/ai/generate-slide-deck", async (req, res) => {
   try {
     const { projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json([
+        {
+          title: "Introduction",
+          content: ["GEMINI_API_KEY is missing.", "Setup keys in .env.local."],
+          speaker_notes: "Demonstration slide deck mode",
+          layout: "title"
+        }
+      ]);
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `Based on the following project context, generate a structured slide deck for a presentation.
@@ -642,6 +656,10 @@ app.post("/api/ai/analyze-confusion", async (req, res) => {
     const { query: userQuery, projectId, userId } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
 
+    if (!hasGeminiKey) {
+      return res.json({ text: `### Confusion Helper (Demo Mode)\n\n* Clear simplified explanation about: **${userQuery}**\n\nConfigure your \`GEMINI_API_KEY\` to get tailored breakdowns and simple analogies!` });
+    }
+
     const context = await getProjectContextServer(projectId, userId);
     const prompt = `The user is confused about: "${userQuery}".
     Based on the project context, provide a clear, simplified explanation that directly addresses the confusion.
@@ -668,6 +686,18 @@ app.post("/api/ai/concept-battle", async (req, res) => {
   try {
     const { query: userQuery, projectId, userId, concepts } = req.body;
     if (!projectId || !userId) throw new Error("Project ID and User ID are required");
+
+    if (!hasGeminiKey) {
+      return res.json({
+        concepts: concepts || ["Concept X", "Concept Y"],
+        comparison: [
+          { feature: "Database", concept1: "NoSQL", concept2: "SQL" }
+        ],
+        analogy: "Setup GEMINI_API_KEY to trigger professional battles comparing easily confused academic topics.",
+        scenario: "Interactive Battle Mode is in offline/demo status.",
+        quiz_question: null
+      });
+    }
 
     const context = await getProjectContextServer(projectId, userId);
     const prompt = concepts
@@ -708,6 +738,78 @@ app.post("/api/ai/concept-battle", async (req, res) => {
   } catch (error: any) {
     console.error("Concept battle error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// 1. Upload PDF/Text and Extract Text (Fallback definition)
+// 2. Import Google Doc via URL
+app.post("/api/documents/import-url", async (req, res) => {
+  try {
+    const { url, user_id, project_id } = req.body;
+    if (!url) throw new Error("URL is required");
+
+    let text = "";
+    let title = "Imported Document";
+
+    if (url.includes('docs.google.com/document/d/')) {
+      const docId = url.match(/\/d\/(.*?)(\/|$)/)?.[1];
+      if (!docId) throw new Error("Invalid Google Docs URL");
+
+      const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+      const response = await fetch(exportUrl);
+      if (!response.ok) throw new Error("Failed to fetch Google Doc. Make sure it's public or shared with 'Anyone with the link'.");
+      text = await response.text();
+      title = `Google Doc: ${docId}`;
+    } else {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch URL");
+      text = await response.text();
+      text = text.replace(/<[^>]*>?/gm, '');
+      title = `Web Page: ${new URL(url).hostname}`;
+    }
+
+    // Save Document to Firestore
+    const docRef = db.collection('documents').doc();
+    const document = {
+      id: docRef.id,
+      title,
+      content: text,
+      source_type: 'url',
+      user_id,
+      project_id,
+      created_at: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await docRef.set(document);
+
+    res.json(document);
+  } catch (error: any) {
+    console.error("URL Import error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. YouTube Transcript
+app.post("/api/youtube/transcript", async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) throw new Error("YouTube URL is required");
+
+    const videoIdMatch = url.match(/(?:v=|\/v\/|embed\/|youtu\.be\/|\/shorts\/)([^#&?]*).*/);
+    const videoId = videoIdMatch ? videoIdMatch[1] : url;
+
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+    const text = transcript.map(t => t.text).join(" ");
+
+    res.json({ text });
+  } catch (error: any) {
+    console.error("YouTube error:", error);
+    let message = error.message;
+    if (message.includes('Transcript is disabled')) {
+      message = "Transcripts are disabled for this video.";
+    } else if (message.includes('Could not find transcript')) {
+      message = "Could not find a transcript for this video.";
+    }
+    res.status(500).json({ error: message });
   }
 });
 
