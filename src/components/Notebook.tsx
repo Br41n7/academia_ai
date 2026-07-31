@@ -27,6 +27,7 @@ import { useCollaboration } from '../hooks/useCollaboration';
 import VisualGenerator from './VisualGenerator';
 import ConceptBattle from './ConceptBattle';
 import { db, collection, query, where, onSnapshot, orderBy, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, auth } from '../firebase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
 import { generateNotebookAction, checkPlagiarism as checkPlagiarismAi } from '../services/geminiService';
 
@@ -89,38 +90,99 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
 
     const uid = auth.currentUser.uid;
 
-    const docsQuery = query(
-      collection(db, 'documents'),
-      where('project_id', '==', projectId),
-      where('user_id', '==', uid),
-      orderBy('created_at', 'desc')
-    );
+    if (isSupabaseConfigured && supabase) {
+      supabase
+        .from('documents')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false })
+        .then(({ data }) => {
+          if (data) setDocuments(data as Document[]);
+        });
 
-    const notesQuery = query(
-      collection(db, 'notes'),
-      where('project_id', '==', projectId),
-      where('user_id', '==', uid),
-      orderBy('created_at', 'desc')
-    );
+      supabase
+        .from('notes')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false })
+        .then(({ data }) => {
+          if (data) setNotes(data as Note[]);
+        });
 
-    const unsubscribeDocs = onSnapshot(docsQuery, (snapshot) => {
-      const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document));
-      setDocuments(docsData);
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'documents'));
+      const docsChannel = supabase
+        .channel('public:documents')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'documents', filter: `project_id=eq.${projectId}` }, () => {
+          supabase
+            .from('documents')
+            .select('*')
+            .eq('project_id', projectId)
+            .eq('user_id', uid)
+            .order('created_at', { ascending: false })
+            .then(({ data }) => {
+              if (data) setDocuments(data as Document[]);
+            });
+        })
+        .subscribe();
 
-    const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
-      const notesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Note));
-      setNotes(notesData);
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'notes'));
+      const notesChannel = supabase
+        .channel('public:notes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notes', filter: `project_id=eq.${projectId}` }, () => {
+          supabase
+            .from('notes')
+            .select('*')
+            .eq('project_id', projectId)
+            .eq('user_id', uid)
+            .order('created_at', { ascending: false })
+            .then(({ data }) => {
+              if (data) setNotes(data as Note[]);
+            });
+        })
+        .subscribe();
 
-    if (mode === 'mindmap' || mode === 'graph') {
-      performAiAction(mode === 'mindmap' ? 'mindmap' : 'knowledge_graph');
+      if (mode === 'mindmap' || mode === 'graph') {
+        performAiAction(mode === 'mindmap' ? 'mindmap' : 'knowledge_graph');
+      }
+
+      return () => {
+        supabase.removeChannel(docsChannel);
+        supabase.removeChannel(notesChannel);
+      };
+    } else {
+      const docsQuery = query(
+        collection(db, 'documents'),
+        where('project_id', '==', projectId),
+        where('user_id', '==', uid),
+        orderBy('created_at', 'desc')
+      );
+
+      const notesQuery = query(
+        collection(db, 'notes'),
+        where('project_id', '==', projectId),
+        where('user_id', '==', uid),
+        orderBy('created_at', 'desc')
+      );
+
+      const unsubscribeDocs = onSnapshot(docsQuery, (snapshot) => {
+        const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Document));
+        setDocuments(docsData);
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'documents'));
+
+      const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
+        const notesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Note));
+        setNotes(notesData);
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'notes'));
+
+      if (mode === 'mindmap' || mode === 'graph') {
+        performAiAction(mode === 'mindmap' ? 'mindmap' : 'knowledge_graph');
+      }
+
+      return () => {
+        unsubscribeDocs();
+        unsubscribeNotes();
+      };
     }
-
-    return () => {
-      unsubscribeDocs();
-      unsubscribeNotes();
-    };
   }, [projectId, mode]);
 
   const handleDeleteSource = async (id: string, type: 'document' | 'note', e: React.MouseEvent) => {
@@ -128,7 +190,15 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
     if (!confirm('Are you sure you want to delete this source?')) return;
     
     try {
-      await deleteDoc(doc(db, type === 'document' ? 'documents' : 'notes', id));
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from(type === 'document' ? 'documents' : 'notes')
+          .delete()
+          .eq('id', id);
+        if (error) throw error;
+      } else {
+        await deleteDoc(doc(db, type === 'document' ? 'documents' : 'notes', id));
+      }
       setSelectedDocIds(prev => prev.filter(docId => docId !== id));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, type);
@@ -139,15 +209,29 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
     if (!newSourceTitle.trim() || !newSourceContent.trim() || !auth.currentUser) return;
     try {
       const noteId = uuidv4();
-      await setDoc(doc(db, 'notes', noteId), {
-        id: noteId,
-        title: newSourceTitle,
-        content: newSourceContent,
-        source_type: 'text',
-        project_id: projectId,
-        user_id: auth.currentUser.uid,
-        created_at: new Date().toISOString()
-      });
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from('notes')
+          .insert({
+            id: noteId,
+            title: newSourceTitle,
+            content: newSourceContent,
+            source_type: 'text',
+            project_id: projectId,
+            user_id: auth.currentUser.uid
+          });
+        if (error) throw error;
+      } else {
+        await setDoc(doc(db, 'notes', noteId), {
+          id: noteId,
+          title: newSourceTitle,
+          content: newSourceContent,
+          source_type: 'text',
+          project_id: projectId,
+          user_id: auth.currentUser.uid,
+          created_at: new Date().toISOString()
+        });
+      }
       setIsAddingSource(false);
       setNewSourceTitle('');
       setNewSourceContent('');

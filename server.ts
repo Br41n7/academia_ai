@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import admin from 'firebase-admin';
 import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
+import { createClient } from '@supabase/supabase-js';
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -17,13 +18,18 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+dotenv.config();
+
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const isSupabaseConfigured = !!supabase;
+
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-dotenv.config();
 
 const app = express();
 const PORT = 3000;
@@ -40,18 +46,37 @@ const upload = multer({ storage: multer.memoryStorage() });
 // Helper to retrieve project context (RAG) securely on the server-side with token limits/truncation check
 async function getProjectContextServer(projectId: string, userId: string) {
   try {
-    const docsSnapshot = await db.collection('documents')
-      .where('project_id', '==', projectId)
-      .where('user_id', '==', userId)
-      .get();
+    let docs = "";
+    let notes = "";
 
-    const notesSnapshot = await db.collection('notes')
-      .where('project_id', '==', projectId)
-      .where('user_id', '==', userId)
-      .get();
+    if (isSupabaseConfigured && supabase) {
+      const { data: dData } = await supabase
+        .from('documents')
+        .select('content')
+        .eq('project_id', projectId)
+        .eq('user_id', userId);
+      const { data: nData } = await supabase
+        .from('notes')
+        .select('content')
+        .eq('project_id', projectId)
+        .eq('user_id', userId);
 
-    let docs = docsSnapshot.docs.map(d => d.data().content).join('\n\n');
-    let notes = notesSnapshot.docs.map(n => n.data().content).join('\n\n');
+      docs = dData ? dData.map((d: any) => d.content).join('\n\n') : '';
+      notes = nData ? nData.map((n: any) => n.content).join('\n\n') : '';
+    } else {
+      const docsSnapshot = await db.collection('documents')
+        .where('project_id', '==', projectId)
+        .where('user_id', '==', userId)
+        .get();
+
+      const notesSnapshot = await db.collection('notes')
+        .where('project_id', '==', projectId)
+        .where('user_id', '==', userId)
+        .get();
+
+      docs = docsSnapshot.docs.map(d => d.data().content).join('\n\n');
+      notes = notesSnapshot.docs.map(n => n.data().content).join('\n\n');
+    }
 
     const maxChars = 200000;
     if (docs.length > maxChars) {
@@ -741,7 +766,66 @@ app.post("/api/ai/concept-battle", async (req, res) => {
   }
 });
 
-// 1. Upload PDF/Text and Extract Text (Fallback definition)
+// 1. Upload PDF/Text and Extract Text
+app.post("/api/documents/upload", upload.single('file'), async (req, res) => {
+  try {
+    const { user_id, project_id } = req.body;
+    const file = req.file;
+
+    if (!file) throw new Error("No file uploaded");
+
+    let text = "";
+    const title = file.originalname;
+    const extension = path.extname(title).toLowerCase();
+
+    if (extension === '.pdf') {
+      const data = await pdf(file.buffer);
+      text = data.text;
+    } else if (extension === '.txt') {
+      text = file.buffer.toString('utf-8');
+    } else {
+      throw new Error("Unsupported file type. Please upload a PDF or TXT file.");
+    }
+
+    const docId = crypto.randomUUID();
+    const document = {
+      id: docId,
+      title,
+      content: text,
+      source_type: extension.substring(1),
+      user_id,
+      project_id,
+      created_at: new Date().toISOString()
+    };
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('documents')
+        .insert({
+          id: docId,
+          project_id,
+          user_id,
+          title,
+          content: text,
+          source_type: extension.substring(1)
+        });
+      if (error) throw error;
+    } else {
+      // Fallback to Firestore
+      const docRef = db.collection('documents').doc(docId);
+      await docRef.set({
+        ...document,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    res.json(document);
+  } catch (error: any) {
+    console.error("Upload error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 2. Import Google Doc via URL
 app.post("/api/documents/import-url", async (req, res) => {
   try {
@@ -768,18 +852,37 @@ app.post("/api/documents/import-url", async (req, res) => {
       title = `Web Page: ${new URL(url).hostname}`;
     }
 
-    // Save Document to Firestore
-    const docRef = db.collection('documents').doc();
+    const docId = crypto.randomUUID();
     const document = {
-      id: docRef.id,
+      id: docId,
       title,
       content: text,
       source_type: 'url',
       user_id,
       project_id,
-      created_at: admin.firestore.FieldValue.serverTimestamp()
+      created_at: new Date().toISOString()
     };
-    await docRef.set(document);
+
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase
+        .from('documents')
+        .insert({
+          id: docId,
+          project_id,
+          user_id,
+          title,
+          content: text,
+          source_type: 'url'
+        });
+      if (error) throw error;
+    } else {
+      // Save Document to Firestore
+      const docRef = db.collection('documents').doc(docId);
+      await docRef.set({
+        ...document,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     res.json(document);
   } catch (error: any) {

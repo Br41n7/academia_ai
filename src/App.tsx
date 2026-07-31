@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
-import { auth, signInWithGoogle, signInWithGoogleRedirect, getGoogleRedirectResult, signOut, awardPoints } from './firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 import ProjectSelector from './components/ProjectSelector';
 import ProjectLayout from './components/ProjectLayout';
 import Notebook from './components/Notebook';
@@ -24,7 +23,7 @@ interface Project {
 }
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -38,50 +37,73 @@ export default function App() {
     setIsSigningIn(true);
     setAuthError(null);
     try {
-      await signInWithGoogle();
+      if (!isSupabaseConfigured || !supabase) {
+        // Fallback for local sandbox/testing environment: automatically sign-in with a Mock Student User
+        setUser({
+          id: '00000000-0000-0000-0000-000000000000',
+          uid: '00000000-0000-0000-0000-000000000000',
+          email: 'student@academic-ai.com',
+          user_metadata: {
+            full_name: 'Mock Student (Demo Mode)'
+          },
+          displayName: 'Mock Student (Demo Mode)',
+          photoURL: ''
+        });
+      } else {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin
+          }
+        });
+        if (error) throw error;
+      }
     } catch (error: any) {
       console.error('Sign in error:', error);
-      if (error.code === 'auth/popup-blocked') {
-        setAuthError('Sign-in popup was blocked. You can try the redirect method instead.');
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        setAuthError('A sign-in request is already in progress.');
-      } else if (error.code === 'auth/popup-closed-by-user') {
-        setAuthError('Sign-in was cancelled.');
-      } else {
-        setAuthError('An unexpected error occurred. Please try again.');
-      }
+      setAuthError(error.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setIsSigningIn(false);
     }
   };
 
   const handleSignInRedirect = async () => {
-    if (isSigningIn) return;
-    setIsSigningIn(true);
-    setAuthError(null);
-    try {
-      await signInWithGoogleRedirect();
-    } catch (error: any) {
-      console.error('Redirect sign in error:', error);
-      setAuthError('Redirect sign-in failed. Please try opening the app in a new tab.');
-      setIsSigningIn(false);
-    }
+    await handleSignIn();
   };
 
   useEffect(() => {
-    // Check for redirect result
-    getGoogleRedirectResult().catch(err => {
-      console.error('Redirect result error:', err);
+    if (!isSupabaseConfigured || !supabase) {
+      setIsAuthReady(true);
+      return;
+    }
+
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        setUser({
+          ...user,
+          uid: user.id,
+          displayName: user.user_metadata?.full_name || user.email,
+          photoURL: user.user_metadata?.avatar_url || ''
+        });
+      }
+      setIsAuthReady(true);
     });
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setIsAuthReady(true);
-      if (user) {
-        awardPoints(user.uid, 0); // Ensure profile exists
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const su = session?.user;
+      if (su) {
+        setUser({
+          ...su,
+          uid: su.id,
+          displayName: su.user_metadata?.full_name || su.email,
+          photoURL: su.user_metadata?.avatar_url || ''
+        });
+      } else {
+        setUser(null);
       }
+      setIsAuthReady(true);
     });
-    return () => unsubscribe();
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
