@@ -6,6 +6,7 @@ import { ACADEMIC_MODES } from '../constants';
 import { AcademicMode, ExplanationResponse, TunedQuestionResponse } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth } from '../firebase';
+import { apiFetch } from '../lib/api';
 
 import VisualGenerator from './VisualGenerator';
 import ConceptBattle from './ConceptBattle';
@@ -37,9 +38,8 @@ export default function AskAI({ projectId }: AskAIProps) {
     setIsLoading(true);
     setTunedData(null);
     try {
-      const res = await fetch('/api/ai/notebook/action', {
+      const res = await apiFetch('/api/ai/notebook/action', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           action: 'chat', 
           project_id: projectId, 
@@ -61,9 +61,8 @@ export default function AskAI({ projectId }: AskAIProps) {
     if (!query.trim()) return;
     setIsTuning(true);
     try {
-      const res = await fetch('/api/ai/tune-question', {
+      const res = await apiFetch('/api/ai/tune-question', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: query }),
       });
       const data = await res.json();

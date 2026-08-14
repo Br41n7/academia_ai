@@ -158,8 +158,17 @@ export default function ProjectLayout({
             >
               <Sparkles size={20} className={isDarkMode ? "text-amber-400" : "text-gray-400"} />
             </button>
-            <button className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-full transition-all">
-              <Settings size={20} className="text-gray-400" />
+            <button
+              aria-label="Settings"
+              onClick={() => setActiveTab('settings')}
+              className={cn(
+                "p-2 rounded-full transition-all",
+                activeTab === 'settings'
+                  ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400"
+                  : "hover:bg-gray-100 dark:hover:bg-white/5 text-gray-400"
+              )}
+            >
+              <Settings size={20} />
             </button>
           </div>
         </header>

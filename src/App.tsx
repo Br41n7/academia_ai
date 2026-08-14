@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { auth } from './firebase';
+import { signInAnonymously } from 'firebase/auth';
 import ProjectSelector from './components/ProjectSelector';
 import ProjectLayout from './components/ProjectLayout';
 import Notebook from './components/Notebook';
@@ -14,6 +16,7 @@ import Leaderboard from './components/Leaderboard';
 import ExamMode from './components/ExamMode';
 import CourseBuilder from './components/CourseBuilder';
 import StudyReminders from './components/StudyReminders';
+import Settings from './components/Settings';
 import { LogIn, GraduationCap } from 'lucide-react';
 
 interface Project {
@@ -37,11 +40,19 @@ export default function App() {
     setIsSigningIn(true);
     setAuthError(null);
     try {
+      try {
+        if (!auth.currentUser) {
+          await signInAnonymously(auth);
+        }
+      } catch (fbErr) {
+        console.warn('[App] Firebase anonymous fallback warning:', fbErr);
+      }
+
       if (!isSupabaseConfigured || !supabase) {
         // Fallback for local sandbox/testing environment: automatically sign-in with a Mock Student User
         setUser({
-          id: '00000000-0000-0000-0000-000000000000',
-          uid: '00000000-0000-0000-0000-000000000000',
+          id: auth.currentUser?.uid || '00000000-0000-0000-0000-000000000000',
+          uid: auth.currentUser?.uid || '00000000-0000-0000-0000-000000000000',
           email: 'student@academic-ai.com',
           user_metadata: {
             full_name: 'Mock Student (Demo Mode)'
@@ -215,6 +226,7 @@ export default function App() {
             {activeTab === 'mindmap' && <Notebook projectId={selectedProject.id} mode="mindmap" />}
             {activeTab === 'graph' && <Notebook projectId={selectedProject.id} mode="graph" />}
             {activeTab === 'planner' && <StudyReminders projectId={selectedProject.id} />}
+            {activeTab === 'settings' && <Settings />}
           </motion.div>
         </AnimatePresence>
       </ProjectLayout>

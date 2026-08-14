@@ -29,6 +29,23 @@ export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps
   useEffect(() => {
     if (!user) return;
 
+    // Load initial cached projects from localStorage instantly
+    try {
+      const localKey = `projects_${user.uid}`;
+      const localStored = localStorage.getItem(localKey);
+      if (localStored) {
+        setProjects(JSON.parse(localStored));
+        setIsLoading(false);
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // Safety timeout to clear loading skeleton if Firestore is offline or delayed
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 1200);
+
     if (isSupabaseConfigured && supabase) {
       setIsLoading(true);
       supabase
@@ -76,10 +93,23 @@ export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps
         setIsLoading(false);
       }, (error) => {
         handleFirestoreError(error, OperationType.LIST, 'projects');
+        try {
+          const localStored = localStorage.getItem(`projects_${user.uid}`);
+          if (localStored) {
+            setProjects(JSON.parse(localStored));
+          } else {
+            setProjects([]);
+          }
+        } catch (e) {
+          setProjects([]);
+        }
         setIsLoading(false);
       });
 
-      return () => unsubscribe();
+      return () => {
+        clearTimeout(timer);
+        unsubscribe();
+      };
     }
   }, [user]);
 
@@ -115,11 +145,21 @@ export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps
       } else {
         await setDoc(doc(db, 'projects', projectId), newProject);
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'projects');
+    } finally {
+      try {
+        const localKey = `projects_${user.uid}`;
+        const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const updated = [newProject, ...existing.filter((p: any) => p.id !== projectId)];
+        localStorage.setItem(localKey, JSON.stringify(updated));
+        setProjects(updated);
+      } catch (e) {
+        // ignore
+      }
       setIsCreating(false);
       setNewName('');
       setNewDesc('');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'projects');
     }
   };
 

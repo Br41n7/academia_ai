@@ -23,5 +23,6 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"],
     "noEmit": true
-  }
+  },
+  "exclude": ["server.ts", "server", "dist-server", "node_modules", "dist"]
 }

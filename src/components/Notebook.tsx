@@ -28,6 +28,7 @@ import VisualGenerator from './VisualGenerator';
 import ConceptBattle from './ConceptBattle';
 import { db, collection, query, where, onSnapshot, orderBy, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, auth } from '../firebase';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { apiFetch } from '../lib/api';
 import { v4 as uuidv4 } from 'uuid';
 import { generateNotebookAction, checkPlagiarism as checkPlagiarismAi } from '../services/geminiService';
 
@@ -252,7 +253,7 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
     formData.append('project_id', projectId);
 
     try {
-      const res = await fetch('/api/documents/upload', {
+      const res = await apiFetch('/api/documents/upload', {
         method: 'POST',
         body: formData,
       });
@@ -310,9 +311,8 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
     setIsFetchingYoutube(true);
     setImportError(null);
     try {
-      const res = await fetch('/api/youtube/transcript', {
+      const res = await apiFetch('/api/youtube/transcript', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: youtubeUrl }),
       });
       const data = await res.json();
@@ -340,9 +340,8 @@ export default function Notebook({ projectId, mode }: NotebookProps) {
     setIsFetchingGoogleDoc(true);
     setImportError(null);
     try {
-      const res = await fetch('/api/documents/import-url', {
+      const res = await apiFetch('/api/documents/import-url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           url: googleDocUrl,
           user_id: auth.currentUser.uid,
