@@ -1,7 +1,16 @@
 import { auth } from '../firebase';
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const token = await auth.currentUser?.getIdToken();
+  let token = localStorage.getItem('customAuthToken');
+
+  if (!token && auth.currentUser) {
+    try {
+      token = await auth.currentUser.getIdToken();
+    } catch {
+      // Ignore firebase token error if unused
+    }
+  }
+
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> || {}),
   };

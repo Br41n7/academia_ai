@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
-import { AuthRequest, authenticateToken } from '../middleware/auth.js';
-import { executeAIGeneration } from '../services/aiFactory.js';
-import { validateOutput } from '../services/validation.js';
+import { AuthRequest, authenticateToken } from '../middleware/auth';
+import { executeAIGeneration } from '../services/aiFactory';
+import { validateOutput } from '../services/validation';
 
 const router = Router();
 

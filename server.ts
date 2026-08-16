@@ -4,16 +4,14 @@ import dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
 import url from 'url';
-import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
-// Load config safely without ESM assert syntax
-const firebaseConfig = JSON.parse(
-  fs.readFileSync(path.resolve(process.cwd(), 'firebase-applet-config.json'), 'utf-8')
-);
+// Load config first
+import { readFileSync } from 'fs';
+const firebaseConfig = JSON.parse(readFileSync(new URL('./firebase-applet-config.json', import.meta.url), 'utf-8'));
 
 dotenv.config();
 
@@ -51,11 +49,13 @@ app.use(cors({
 app.use(express.json());
 
 // Import Routers
+import authRouter from './server/routes/auth.js';
 import documentsRouter from './server/routes/documents.js';
 import researchRouter from './server/routes/research.js';
 import aiRouter from './server/routes/ai.js';
 
 // Mount API Routes
+app.use('/api/auth', authRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/research', researchRouter);
 app.use('/api/ai', aiRouter);

@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middleware/auth.js';
-import { rateLimit } from '../middleware/rateLimit.js';
-import { creditCheck } from '../middleware/creditCheck.js';
-import { executeAIGeneration } from '../services/aiFactory.js';
-import { buildCulturalPrompt } from '../services/cultural.js';
-import { validateOutput, checkRelevance } from '../services/validation.js';
+import { authenticateToken } from '../middleware/auth';
+import { rateLimit } from '../middleware/rateLimit';
+import { creditCheck } from '../middleware/creditCheck';
+import { executeAIGeneration } from '../services/aiFactory';
+import { buildCulturalPrompt } from '../services/cultural';
+import { validateOutput, checkRelevance } from '../services/validation';
 import admin from 'firebase-admin';
 const router = Router();
 const PERSONAS = {

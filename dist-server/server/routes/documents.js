@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { authenticateToken } from '../middleware/auth.js';
-import { sanitizeText, chunkText, parsePdfBuffer } from '../services/pdf.js';
+import { authenticateToken } from '../middleware/auth';
+import { sanitizeText, chunkText, parsePdfBuffer } from '../services/pdf';
 import { YoutubeTranscript } from 'youtube-transcript';
 const router = Router();
 // Configure multer for memory storage, 15MB limit

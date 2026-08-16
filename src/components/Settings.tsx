@@ -5,11 +5,7 @@ import { auth, db, doc, getDoc, setDoc } from '../firebase';
 import { apiFetch } from '../lib/api';
 
 export default function Settings() {
-  const currentUser = auth.currentUser || {
-    uid: '00000000-0000-0000-0000-000000000000',
-    displayName: 'Mock Student (Demo Mode)',
-    email: 'student@academic-ai.com'
-  };
+  const currentUser = auth.currentUser;
 
   // Active form state
   const [region, setRegion] = useState('default');
@@ -32,6 +28,8 @@ export default function Settings() {
 
   // Load profile from Firestore & fetch server health on mount
   useEffect(() => {
+    if (!currentUser) return;
+
     // 1. Fetch user profile from Firestore at profiles/{uid}
     const loadProfile = async () => {
       try {

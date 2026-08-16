@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
-import { AuthRequest, authenticateToken } from '../middleware/auth.js';
-import { sanitizeText, chunkText, parsePdfBuffer } from '../services/pdf.js';
+import { AuthRequest, authenticateToken } from '../middleware/auth';
+import { sanitizeText, chunkText, parsePdfBuffer } from '../services/pdf';
 import { YoutubeTranscript } from 'youtube-transcript';
 
 const router = Router();

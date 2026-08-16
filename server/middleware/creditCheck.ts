@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import { AuthRequest } from './auth.js';
+import { AuthRequest } from './auth';
 import admin from 'firebase-admin';
 
 export async function creditCheck(req: AuthRequest, res: Response, next: NextFunction) {
