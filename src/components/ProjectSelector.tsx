@@ -3,7 +3,7 @@ import { Plus, Folder, Calendar, ArrowRight, BookOpen, Search } from 'lucide-rea
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { db, collection, onSnapshot, query, where, orderBy, setDoc, doc, handleFirestoreError, OperationType } from '../firebase';
-import { User } from 'firebase/auth';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
 
 interface Project {
@@ -15,7 +15,7 @@ interface Project {
 
 interface ProjectSelectorProps {
   onSelect: (project: Project) => void;
-  user: User;
+  user: any;
 }
 
 export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps) {
@@ -29,25 +29,58 @@ export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps
   useEffect(() => {
     if (!user) return;
 
-    const q = query(
-      collection(db, 'projects'),
-      where('user_id', '==', user.uid),
-      orderBy('created_at', 'desc')
-    );
+    if (isSupabaseConfigured && supabase) {
+      setIsLoading(true);
+      supabase
+        .from('projects')
+        .select('*')
+        .eq('user_id', user.uid)
+        .order('created_at', { ascending: false })
+        .then(({ data, error }) => {
+          if (data) {
+            setProjects(data as Project[]);
+          }
+          setIsLoading(false);
+        });
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projectsList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Project[];
-      setProjects(projectsList);
-      setIsLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'projects');
-      setIsLoading(false);
-    });
+      const channel = supabase
+        .channel('public:projects')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `user_id=eq.${user.uid}` }, () => {
+          supabase
+            .from('projects')
+            .select('*')
+            .eq('user_id', user.uid)
+            .order('created_at', { ascending: false })
+            .then(({ data }) => {
+              if (data) setProjects(data as Project[]);
+            });
+        })
+        .subscribe();
 
-    return () => unsubscribe();
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } else {
+      const q = query(
+        collection(db, 'projects'),
+        where('user_id', '==', user.uid),
+        orderBy('created_at', 'desc')
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const projectsList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Project[];
+        setProjects(projectsList);
+        setIsLoading(false);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'projects');
+        setIsLoading(false);
+      });
+
+      return () => unsubscribe();
+    }
   }, [user]);
 
   const filteredProjects = projects.filter(p => 
@@ -69,7 +102,19 @@ export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps
     };
 
     try {
-      await setDoc(doc(db, 'projects', projectId), newProject);
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from('projects')
+          .insert({
+            id: projectId,
+            name: newName,
+            description: newDesc,
+            user_id: user.uid
+          });
+        if (error) throw error;
+      } else {
+        await setDoc(doc(db, 'projects', projectId), newProject);
+      }
       setIsCreating(false);
       setNewName('');
       setNewDesc('');

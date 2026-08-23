@@ -1,4 +1,5 @@
 import { auth } from '../firebase';
+import { apiFetch } from '../lib/api';
 
 // Helper to make secure HTTP requests to Express server AI endpoints
 async function callAiEndpoint(path: string, payload: any) {
@@ -6,11 +7,8 @@ async function callAiEndpoint(path: string, payload: any) {
   if (!user) {
     throw new Error("Unauthorized: User is not authenticated.");
   }
-  const response = await fetch(path, {
+  const response = await apiFetch(path, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
     body: JSON.stringify({
       ...payload,
       userId: user.uid

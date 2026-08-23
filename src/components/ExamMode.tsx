@@ -640,8 +640,43 @@ export default function ExamMode({ projectId, onNavigate }: ExamModeProps) {
                             onClick={() => {
                               if (btn === '=') {
                                 try {
-                                  // Simple eval for demo purposes, in real app use a math library
-                                  setCalcValue(eval(calcValue).toString());
+                                  const sanitized = calcValue.replace(/[^0-9+\-*/. ]/g, '');
+                                  const tokens = sanitized.match(/(\d+\.?\d*)|[+\-*/]/g);
+                                  if (!tokens) {
+                                    setCalcValue('0');
+                                    return;
+                                  }
+                                  const values: (number | string)[] = [];
+                                  let idx = 0;
+                                  while (idx < tokens.length) {
+                                    const tok = tokens[idx];
+                                    if (tok === '*' || tok === '/') {
+                                      const prev = Number(values.pop());
+                                      const next = Number(tokens[++idx]);
+                                      if (tok === '*') {
+                                        values.push(prev * next);
+                                      } else {
+                                        values.push(prev / next);
+                                      }
+                                    } else {
+                                      const num = Number(tok);
+                                      values.push(isNaN(num) ? tok : num);
+                                    }
+                                    idx++;
+                                  }
+                                  let res = Number(values[0]);
+                                  let j = 1;
+                                  while (j < values.length) {
+                                    const op = values[j];
+                                    const nextVal = Number(values[j + 1]);
+                                    if (op === '+') {
+                                      res += nextVal;
+                                    } else if (op === '-') {
+                                      res -= nextVal;
+                                    }
+                                    j += 2;
+                                  }
+                                  setCalcValue(res.toString());
                                 } catch {
                                   setCalcValue('Error');
                                 }
