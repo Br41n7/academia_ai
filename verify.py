@@ -25,7 +25,7 @@ def run():
         if not page.is_visible("h3:has-text('Medical Neural Networks')"):
             print("Clicking New Project...")
             page.click("button:has-text('New Project')")
-            page.fill("input[placeholder*='Quantum Physics']", "Medical Neural Networks")
+            page.fill("input[placeholder*='Quantum Computing']", "Medical Neural Networks")
             page.fill("textarea", "Research into brain image segmentation using deep learning.")
             page.click("button[type='submit']:has-text('Create Project')")
             page.click("button:has-text('Cancel')")
@@ -36,7 +36,7 @@ def run():
         if page.is_visible("h3:has-text('Medical Neural Networks')"):
             page.click("h3:has-text('Medical Neural Networks')")
         else:
-            page.click("button.group")
+            page.click("div.group")
 
         # Wait for main project layout dashboard
         print("Waiting for main layout...")
@@ -46,8 +46,11 @@ def run():
         print("Navigating to Settings view...")
         page.click("button[aria-label='Settings']")
 
-        # Wait for Settings view heading
-        page.wait_for_selector("h2:has-text('Settings')", timeout=10000)
+        # Wait for Settings view form section to be fully visible and animated in
+        print("Waiting for Settings form...")
+        page.wait_for_selector("text=Profile & AI Defaults", timeout=10000)
+        page.wait_for_selector("text=Gemini Generative Engine", timeout=10000)
+        page.wait_for_timeout(1000)
 
         page.screenshot(path="/app/screenshots/verification.png")
         print("Screenshot successfully saved to /app/screenshots/verification.png")

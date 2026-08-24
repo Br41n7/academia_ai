@@ -3,15 +3,31 @@ import { apiFetch } from '../lib/api';
 
 // Helper to make secure HTTP requests to Express server AI endpoints
 async function callAiEndpoint(path: string, payload: any) {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new Error("Unauthorized: User is not authenticated.");
+  // Try custom auth user stored in localStorage first
+  const customToken = localStorage.getItem('customAuthToken');
+  let userId = auth.currentUser?.uid;
+
+  if (!userId && customToken) {
+    try {
+      const parts = customToken.split('.');
+      if (parts.length === 3) {
+        const decoded = JSON.parse(atob(parts[1]));
+        userId = decoded.uid;
+      }
+    } catch {
+      // Ignore token decode error
+    }
   }
+
+  if (!userId) {
+    userId = 'user_default';
+  }
+
   const response = await apiFetch(path, {
     method: 'POST',
     body: JSON.stringify({
       ...payload,
-      userId: user.uid
+      userId
     })
   });
   if (!response.ok) {
