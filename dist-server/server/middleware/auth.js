@@ -1,38 +1,27 @@
-import admin from 'firebase-admin';
-import { verifyAuthToken } from '../routes/auth.js';
+import { supabaseAdmin } from '../services/supabaseAdmin.js';
 export async function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = req.headers.authorization?.split('Bearer ')[1];
     if (!token) {
-        return res.status(401).json({ error: 'Authorization token is missing.' });
+        res.status(401).json({ error: 'Not authenticated. Please sign in.' });
+        return;
     }
-    // 1. Try custom JWT auth token verification first
-    const customUser = verifyAuthToken(token);
-    if (customUser) {
-        req.user = customUser;
-        req.userApiKeys = {
-            openaiKey: req.headers['x-openai-key'],
-            anthropicKey: req.headers['x-anthropic-key'],
-            deepseekKey: req.headers['x-deepseek-key'],
-        };
-        return next();
-    }
-    // 2. Fallback to Firebase ID Token verification if custom token verification failed
     try {
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        req.user = {
-            uid: decodedToken.uid,
-            email: decodedToken.email,
-        };
+        // Verify JWT with Supabase — this is the Supabase equivalent of
+        // Firebase Admin verifyIdToken()
+        const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+        if (error || !user) {
+            res.status(401).json({ error: 'Invalid or expired session. Sign in again.' });
+            return;
+        }
+        req.user = { id: user.id, email: user.email };
+        req.accessToken = token;
+        // Session-only user model keys — never stored
         req.userApiKeys = {
-            openaiKey: req.headers['x-openai-key'],
-            anthropicKey: req.headers['x-anthropic-key'],
-            deepseekKey: req.headers['x-deepseek-key'],
+            groqKey: req.headers['x-groq-key'],
         };
-        return next();
+        next();
     }
-    catch (error) {
-        console.error('[Auth Middleware] Verification failed:', error.message);
-        return res.status(401).json({ error: 'Authorization token is invalid or expired.' });
+    catch (err) {
+        res.status(401).json({ error: 'Authentication failed.' });
     }
 }

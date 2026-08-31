@@ -1,171 +1,75 @@
-import { Router, Response } from 'express';
-import { AuthRequest, authenticateToken } from '../middleware/auth';
-import { executeAIGeneration } from '../services/aiFactory';
-import { validateOutput } from '../services/validation';
+import { Router } from 'express';
+import { executeAI } from '../services/aiFactory.js';
+import { AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-/**
- * POST /api/research/extract-entities
- * Extracts the top 15 academic/research entities from a document text.
- */
-router.post('/extract-entities', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/extract-entities', async (req: AuthRequest, res) => {
+  const { docContent } = req.body;
+  if (!docContent) {
+    res.status(400).json({ error: 'Missing docContent' });
+    return;
+  }
+
   try {
-    const { docContent } = req.body;
-    if (!docContent) {
-      return res.status(400).json({ error: 'Document content (docContent) is required.' });
-    }
+    const raw = await executeAI({
+      task: 'extract_entities',
+      prompt: `Extract top 15 key entities from the following text:\n\n${docContent.substring(0, 15000)}`,
+      systemInstruction: 'Respond ONLY in JSON format with key "entities" containing an array of objects with fields: name, category, relevance.',
+      responseFormat: 'json',
+      userKeys: req.userApiKeys
+    });
 
-    const systemInstruction = `You are a meticulous research parsing engine. Analyze the document text and extract the top 15 most significant academic or scientific entities (concepts, formulas, historical figures, organizations, theories, etc.).
-For each entity, output its name, a high-level category (e.g. Theory, Equation, Person), and a concise one-sentence explanation of its relevance in the text.
-You MUST format your response as valid JSON matching this schema:
-{
-  "entities": [
-    { "name": "string", "category": "string", "relevance": "string" }
-  ]
-}`;
-
-    const prompt = `DOCUMENT CONTENT:\n${docContent}`;
-
-    console.log('[Research API] Generating entity extraction via Gemini...');
-    const rawResult = await executeAIGeneration(
-      'gemini',
-      prompt,
-      systemInstruction,
-      'application/json',
-      req.userApiKeys
-    );
-
-    // Validate using Zod research_validator
-    const validation = validateOutput(rawResult, 'research_validator');
-    if (!validation.success) {
-      console.warn('[Research API] Initial schema validation failed. Retrying with stricter instructions...');
-      // Retry once
-      const strictInstruction = `${systemInstruction}\n\nSTRICT: Return ONLY valid JSON matching the schema. No markdown wrapping. No preamble.`;
-      const retryResult = await executeAIGeneration(
-        'gemini',
-        prompt,
-        strictInstruction,
-        'application/json',
-        req.userApiKeys
-      );
-      const retryValidation = validateOutput(retryResult, 'research_validator');
-      if (!retryValidation.success) {
-        return res.status(500).json({
-          error: 'Failed to extract entities in a valid JSON structure.',
-          raw: retryResult
-        });
-      }
-      return res.json({ result: retryValidation.data });
-    }
-
-    return res.json({ result: validation.data });
+    res.json(JSON.parse(raw));
   } catch (err: any) {
-    console.error('[Research API - extract-entities] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'Entity extraction failed.' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * POST /api/research/query-corpus
- * Answers a research query solely using context from the document corpus.
- */
-router.post('/query-corpus', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/query-corpus', async (req: AuthRequest, res) => {
+  const { query, corpus } = req.body;
+  if (!query) {
+    res.status(400).json({ error: 'Missing query' });
+    return;
+  }
+
   try {
-    const { query, corpusText } = req.body;
-    if (!query || !corpusText) {
-      return res.status(400).json({ error: 'Both query and corpusText are required.' });
-    }
+    const raw = await executeAI({
+      task: 'query_corpus',
+      prompt: `Answer query "${query}" using ONLY the following document corpus excerpts:\n\n${JSON.stringify(corpus || []).substring(0, 20000)}`,
+      systemInstruction: 'Respond ONLY in JSON with fields "answer" and "excerpts" containing array of objects with documentTitle, quote, explanation.',
+      responseFormat: 'json',
+      userKeys: req.userApiKeys
+    });
 
-    const systemInstruction = `You are an advanced academic research assistant. Answer the user's research query based strictly on the provided document corpus content.
-Do not hallucinate or use external knowledge not contained in the corpus. If the answer is not in the text, clearly state that.
-For your answer, extract relevant verbatim or close source excerpts/quotes to validate your claims.
-You MUST format your response as valid JSON matching this schema:
-{
-  "answer": "string",
-  "sources": [
-    { "title": "string", "excerpt": "string" }
-  ]
-}`;
-
-    const prompt = `RESEARCH QUERY: ${query}\n\nDOCUMENT CORPUS:\n${corpusText}`;
-
-    console.log('[Research API] Querying corpus via Gemini...');
-    const rawResult = await executeAIGeneration(
-      'gemini',
-      prompt,
-      systemInstruction,
-      'application/json',
-      req.userApiKeys
-    );
-
-    const validation = validateOutput(rawResult, 'research_validator');
-    if (!validation.success) {
-      console.warn('[Research API] Initial query-corpus schema validation failed. Retrying with stricter instructions...');
-      const strictInstruction = `${systemInstruction}\n\nSTRICT: Return ONLY valid JSON matching the schema. No markdown wrapping. No preamble.`;
-      const retryResult = await executeAIGeneration(
-        'gemini',
-        prompt,
-        strictInstruction,
-        'application/json',
-        req.userApiKeys
-      );
-      const retryValidation = validateOutput(retryResult, 'research_validator');
-      if (!retryValidation.success) {
-        return res.status(500).json({
-          error: 'Failed to query the document corpus in a valid JSON structure.',
-          raw: retryResult
-        });
-      }
-      return res.json({ result: retryValidation.data });
-    }
-
-    return res.json({ result: validation.data });
+    res.json(JSON.parse(raw));
   } catch (err: any) {
-    console.error('[Research API - query-corpus] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'Corpus querying failed.' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * POST /api/research/doc-chat
- * Performs a multi-turn conversation focused on a single document's content.
- */
-router.post('/doc-chat', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/doc-chat', async (req: AuthRequest, res) => {
+  const { message, history, docContent, docTitle } = req.body;
+  if (!message) {
+    res.status(400).json({ error: 'Missing message' });
+    return;
+  }
+
   try {
-    const { message, history, docContent } = req.body;
-    if (!message || !docContent) {
-      return res.status(400).json({ error: 'Both message and docContent are required.' });
-    }
+    const text = await executeAI({
+      task: 'doc_chat',
+      prompt: `Document Title: ${docTitle || 'Study Material'}
+Document Content Excerpt:
+${(docContent || '').substring(0, 10000)}
 
-    const conversationHistory = Array.isArray(history) ? history : [];
+User Question: ${message}`,
+      systemInstruction: 'You are an intelligent study partner. Answer questions accurately based on the document provided.',
+      userKeys: req.userApiKeys
+    });
 
-    const systemInstruction = `You are an expert tutor engaged in a multi-turn chat about a specific academic document.
-Your objective is to help the student understand this document deeply by answering questions, clarifying terms, and raising socratic prompts when appropriate.
-Keep your answers highly accurate, grounded on the document content, and directly related to their queries.`;
-
-    // Construct dialogue context
-    let prompt = `DOCUMENT CONTENT:\n${docContent}\n\n`;
-    prompt += 'CONVERSATION RECORD:\n';
-    for (const turn of conversationHistory) {
-      const roleName = turn.role === 'user' ? 'Student' : 'Tutor';
-      prompt += `${roleName}: ${turn.content || turn.text || ''}\n`;
-    }
-    prompt += `Student: ${message}\nTutor:`;
-
-    console.log('[Research API] Executing doc-chat turn via Gemini...');
-    const responseText = await executeAIGeneration(
-      'gemini',
-      prompt,
-      systemInstruction,
-      'text',
-      req.userApiKeys
-    );
-
-    return res.json({ result: responseText });
+    res.json({ text });
   } catch (err: any) {
-    console.error('[Research API - doc-chat] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'Doc chat conversation failed.' });
+    res.status(500).json({ error: err.message });
   }
 });
 

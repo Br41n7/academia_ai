@@ -40,7 +40,7 @@ export default function VisualGenerator({ projectId, initialTopic = '' }: Visual
     if (!topic.trim()) return;
     setIsLoading(true);
     try {
-      const data = await generateVisual(topic, format, projectId);
+      const data = await generateVisual(topic);
       setVisualData(data);
     } catch (error) {
       console.error('Error generating visual:', error);

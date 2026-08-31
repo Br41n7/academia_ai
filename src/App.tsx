@@ -14,7 +14,9 @@ import ExamMode from './components/ExamMode';
 import CourseBuilder from './components/CourseBuilder';
 import StudyReminders from './components/StudyReminders';
 import Settings from './components/Settings';
-import { LogIn, GraduationCap, User } from 'lucide-react';
+import { supabase } from './lib/supabase';
+import { signInWithGoogle } from './lib/auth';
+import { GraduationCap, LogIn } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -28,91 +30,31 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [isDarkMode, setIsDarkMode] = useState(false);
-
-  const [emailInput, setEmailInput] = useState('researcher@example.com');
-  const [nameInput, setNameInput] = useState('Dr. Scholar');
-  const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Check existing session on mount
   useEffect(() => {
-    const existingToken = localStorage.getItem('customAuthToken');
-    if (existingToken) {
-      fetch('/api/auth/session', {
-        headers: {
-          'Authorization': `Bearer ${existingToken}`
-        }
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.user) {
-          setUser({
-            uid: data.user.uid,
-            email: data.user.email,
-            displayName: data.user.displayName,
-            photoURL: ''
-          });
-        } else {
-          localStorage.removeItem('customAuthToken');
-        }
-      })
-      .catch(() => {
-        // Fallback to local default session on network error in test environment
-        setUser({
-          uid: 'user_default',
-          email: 'researcher@example.com',
-          displayName: 'Dr. Scholar',
-          photoURL: ''
-        });
-      })
-      .finally(() => setIsAuthReady(true));
-    } else {
-      setIsAuthReady(true);
-    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
+        setIsAuthReady(true);
+      }
+    );
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleCustomSignIn = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (isSigningIn) return;
-    setIsSigningIn(true);
-    setAuthError(null);
-
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailInput || 'student@example.com',
-          name: nameInput || 'Academic Student'
+  // On first sign-in, detect region from IP for cultural grounding:
+  useEffect(() => {
+    if (!localStorage.getItem('academia_region')) {
+      fetch('https://ipapi.co/json/')
+        .then(r => r.json())
+        .then(data => {
+          if (data?.country_name) {
+            localStorage.setItem('academia_region', data.country_name);
+          }
         })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to authenticate');
-      }
-
-      localStorage.setItem('customAuthToken', data.token);
-      setUser({
-        uid: data.user.uid,
-        email: data.user.email,
-        displayName: data.user.displayName,
-        photoURL: ''
-      });
-    } catch (err: any) {
-      console.error('Sign in error:', err);
-      // Fallback in case backend server is unreachable in standalone frontend test mode
-      const fallbackUser = {
-        uid: 'user_fallback',
-        email: emailInput || 'student@example.com',
-        displayName: nameInput || 'Academic Student',
-        photoURL: ''
-      };
-      setUser(fallbackUser);
-    } finally {
-      setIsSigningIn(false);
+        .catch(() => {});
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -121,6 +63,16 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [isDarkMode]);
+
+  const handleSignIn = async () => {
+    try {
+      setAuthError(null);
+      await signInWithGoogle();
+    } catch (err: any) {
+      console.error('Sign in error:', err);
+      setAuthError(err.message || 'Failed to sign in with Google');
+    }
+  };
 
   if (!isAuthReady) {
     return (
@@ -142,51 +94,17 @@ export default function App() {
             <GraduationCap size={40} />
           </div>
           <div className="space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight">Academic AI</h1>
-            <p className="text-gray-500 text-sm">Your intelligent study companion. Sign in to start learning.</p>
+            <h1 className="text-3xl font-bold tracking-tight">Academia AI</h1>
+            <p className="text-gray-500 text-sm">AI study copilot for African students. Sign in to start learning.</p>
           </div>
 
-          <form onSubmit={handleCustomSignIn} className="space-y-4 text-left">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
-                Display Name
-              </label>
-              <input
-                type="text"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                placeholder="Dr. Scholar"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="researcher@example.com"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSigningIn}
-              className="w-full flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-600/25 disabled:opacity-50 mt-2"
-            >
-              {isSigningIn ? (
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <LogIn size={20} />
-              )}
-              {isSigningIn ? 'Signing In...' : 'Continue to Dashboard'}
-            </button>
-          </form>
+          <button
+            onClick={handleSignIn}
+            className="w-full flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-indigo-600/25 mt-2"
+          >
+            <LogIn size={20} />
+            Sign In with Google
+          </button>
 
           {authError && (
             <motion.p

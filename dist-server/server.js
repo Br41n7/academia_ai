@@ -5,141 +5,46 @@ import path from 'path';
 import http from 'http';
 import url from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
-// Load config first
-import { readFileSync } from 'fs';
-const firebaseConfig = JSON.parse(readFileSync(new URL('./firebase-applet-config.json', import.meta.url), 'utf-8'));
-dotenv.config();
-// Initialize Firebase Admin
-if (!admin.apps.length) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-        admin.initializeApp({
-            credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON))
-        });
-    }
-    else {
-        admin.initializeApp({
-            projectId: firebaseConfig.projectId
-        });
-    }
-}
-// Get Firestore reference using getFirestore() with specific named database if it exists
-const db = firebaseConfig.firestoreDatabaseId
-    ? getFirestore(admin.apps[0], firebaseConfig.firestoreDatabaseId)
-    : getFirestore(admin.apps[0]);
-const app = express();
-const PORT = process.env.PORT || 3000;
-const IS_PROD = process.env.NODE_ENV === 'production';
-// CORS configuration
-const allowedOrigin = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
-app.use(cors({
-    origin: IS_PROD ? allowedOrigin : '*',
-    credentials: true,
-}));
-app.use(express.json());
-// Import Routers
-import authRouter from './server/routes/auth.js';
+import { fileURLToPath } from 'url';
+import { authenticateToken } from './server/middleware/auth.js';
 import documentsRouter from './server/routes/documents.js';
-import researchRouter from './server/routes/research.js';
 import aiRouter from './server/routes/ai.js';
-// Mount API Routes
-app.use('/api/auth', authRouter);
-app.use('/api/documents', documentsRouter);
-app.use('/api/research', researchRouter);
-app.use('/api/ai', aiRouter);
-/**
- * GET /api/health
- * No authentication required health indicator
- */
-app.get('/api/health', (req, res) => {
+import researchRouter from './server/routes/research.js';
+import projectsRouter from './server/routes/projects.js';
+import profilesRouter from './server/routes/profiles.js';
+dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const IS_PROD = process.env.NODE_ENV === 'production';
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const app = express();
+app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*', credentials: true }));
+app.use(express.json({ limit: '10mb' }));
+// Health check (no auth)
+app.get('/api/health', (_req, res) => {
     res.json({
         status: 'ok',
-        env: process.env.NODE_ENV || 'development',
+        env: IS_PROD ? 'production' : 'development',
         gemini: !!process.env.GEMINI_API_KEY,
-        deepseek: !!process.env.DEEPSEEK_API_KEY,
+        groq: !!process.env.GROQ_API_KEY,
         ts: new Date().toISOString()
     });
 });
-// Co-host WebSocket Server on the same HTTP server
-const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-// Room management: Map<projectId, Set<WebSocket>>
-const rooms = new Map();
-server.on('upgrade', (request, socket, head) => {
-    const parsedUrl = url.parse(request.url || '', true);
-    const pathname = parsedUrl.pathname;
-    if (pathname === '/collab') {
-        const projectId = parsedUrl.query.projectId;
-        if (!projectId) {
-            socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
-            socket.destroy();
-            return;
-        }
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            wss.emit('connection', ws, request);
-        });
-    }
-    else {
-        // Allow Vite dev server upgrades through
-        if (!IS_PROD) {
-            // Let Vite dev server handle websocket upgrades if needed
-        }
-        else {
-            socket.destroy();
-        }
-    }
-});
-wss.on('connection', (ws, request) => {
-    const parsedUrl = url.parse(request.url || '', true);
-    const projectId = parsedUrl.query.projectId;
-    if (!projectId) {
-        ws.close();
-        return;
-    }
-    let room = rooms.get(projectId);
-    if (!room) {
-        room = new Set();
-        rooms.set(projectId, room);
-    }
-    room.add(ws);
-    console.log(`[WebSocket] Client connected to room: ${projectId}. Active clients in room: ${room.size}`);
-    ws.on('message', (message) => {
-        // Broadcast to all other sockets in the same room
-        const currentRoom = rooms.get(projectId);
-        if (currentRoom) {
-            for (const client of currentRoom) {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(message);
-                }
-            }
-        }
-    });
-    ws.on('close', () => {
-        const currentRoom = rooms.get(projectId);
-        if (currentRoom) {
-            currentRoom.delete(ws);
-            console.log(`[WebSocket] Client disconnected from room: ${projectId}. Remaining clients: ${currentRoom.size}`);
-            if (currentRoom.size === 0) {
-                rooms.delete(projectId);
-                console.log(`[WebSocket] Room ${projectId} cleaned up.`);
-            }
-        }
+// Protected routes
+app.use('/api/documents', authenticateToken, documentsRouter);
+app.use('/api/ai', aiRouter); // auth handled inside route
+app.use('/api/research', authenticateToken, researchRouter);
+app.use('/api/projects', authenticateToken, projectsRouter);
+app.use('/api/profiles', authenticateToken, profilesRouter);
+// Global error handler (must be last middleware)
+app.use((err, _req, res, _next) => {
+    console.error('[Error]', err.message);
+    res.status(err.status || 500).json({
+        error: err.message || 'An unexpected error occurred.'
     });
 });
-// Static File Serving & Vite integration based on environment
-async function setupFrontend() {
-    if (IS_PROD) {
-        const distPath = path.resolve(process.cwd(), 'dist');
-        app.use(express.static(distPath));
-        app.get('*', (req, res, next) => {
-            if (req.path.startsWith('/api')) {
-                return next();
-            }
-            res.sendFile(path.join(distPath, 'index.html'));
-        });
-    }
-    else {
+async function startServer() {
+    if (!IS_PROD) {
         const { createServer: createViteServer } = await import('vite');
         const vite = await createViteServer({
             server: { middlewareMode: true },
@@ -147,19 +52,62 @@ async function setupFrontend() {
         });
         app.use(vite.middlewares);
     }
+    else {
+        const distPath = path.join(__dirname, 'dist');
+        app.use(express.static(distPath));
+        app.get('*', (_req, res) => {
+            res.sendFile(path.join(distPath, 'index.html'));
+        });
+    }
+    const server = http.createServer(app);
+    // WebSocket — real-time collaboration
+    const wss = new WebSocketServer({ noServer: true });
+    const rooms = new Map();
+    server.on('upgrade', (request, socket, head) => {
+        const pathname = url.parse(request.url || '').pathname;
+        if (pathname === '/collab') {
+            wss.handleUpgrade(request, socket, head, (ws) => {
+                wss.emit('connection', ws, request);
+            });
+        }
+        else {
+            socket.destroy();
+        }
+    });
+    wss.on('connection', (ws, request) => {
+        const parsed = url.parse(request.url || '', true);
+        const projectId = parsed.query.projectId || 'default';
+        if (!rooms.has(projectId))
+            rooms.set(projectId, new Set());
+        rooms.get(projectId).add(ws);
+        ws.on('message', (data) => {
+            try {
+                const msg = data.toString();
+                const room = rooms.get(projectId);
+                if (!room)
+                    return;
+                for (const client of room) {
+                    if (client !== ws && client.readyState === WebSocket.OPEN) {
+                        client.send(msg);
+                    }
+                }
+            }
+            catch { }
+        });
+        ws.on('close', () => {
+            rooms.get(projectId)?.delete(ws);
+            if (rooms.get(projectId)?.size === 0)
+                rooms.delete(projectId);
+        });
+    });
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log(`\n✅  Academia AI  |  http://localhost:${PORT}`);
+        console.log(`   Gemini:  ${process.env.GEMINI_API_KEY ? '✓' : '✗ MISSING'}`);
+        console.log(`   Groq:    ${process.env.GROQ_API_KEY ? '✓' : '✗ MISSING'}`);
+        console.log(`   Env:     ${IS_PROD ? 'production' : 'development'}\n`);
+    });
 }
-// Global unhandled error handler middleware as the LAST registered middleware
-app.use((err, req, res, next) => {
-    console.error('[Unhandled Error]', err.message || err);
-    res.status(err.status || 500).json({
-        error: err.message || 'An unexpected error occurred.'
-    });
-});
-// Initialize Frontend serving, and listen
-setupFrontend().then(() => {
-    server.listen(PORT, () => {
-        console.log(`[Server] Co-hosted unified service running in ${IS_PROD ? 'production' : 'development'} on port ${PORT}`);
-    });
-}).catch((err) => {
-    console.error('[Server Start Failure]', err);
+startServer().catch((err) => {
+    console.error('Failed to start:', err);
+    process.exit(1);
 });

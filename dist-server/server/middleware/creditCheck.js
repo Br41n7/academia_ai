@@ -1,35 +1,33 @@
-import admin from 'firebase-admin';
+import { supabaseAdmin } from '../services/supabaseAdmin.js';
+const FREE_DAILY_LIMIT = 20;
 export async function creditCheck(req, res, next) {
-    const uid = req.user?.uid;
-    if (!uid) {
+    // If user brought their own Groq key, bypass quota entirely
+    if (req.userApiKeys?.groqKey)
         return next();
-    }
-    // Skip quota check entirely if the user has provided any of their own keys in the headers
-    const hasCustomKey = !!(req.userApiKeys?.openaiKey ||
-        req.userApiKeys?.anthropicKey ||
-        req.userApiKeys?.deepseekKey);
-    if (hasCustomKey) {
-        return next();
-    }
+    const userId = req.user.id;
+    const today = new Date().toISOString().split('T')[0];
     try {
-        const db = admin.firestore();
-        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-        const usageDocId = `${uid}_${today}`;
-        const usageDocRef = db.collection('usage').doc(usageDocId);
-        const docSnap = await usageDocRef.get();
-        const currentCount = docSnap.exists ? (docSnap.data()?.count || 0) : 0;
-        if (currentCount >= 15) {
+        const { data, error } = await supabaseAdmin
+            .from('ai_usage')
+            .select('count')
+            .eq('user_id', userId)
+            .eq('usage_date', today)
+            .single();
+        const current = data?.count ?? 0;
+        if (current >= FREE_DAILY_LIMIT) {
             return res.status(429).json({
-                error: "Daily limit of 15 AI requests reached. Add your own API key in Settings > My AI for unlimited access. Resets at midnight."
+                error: `Daily limit of ${FREE_DAILY_LIMIT} AI requests reached. ` +
+                    `Add your own Groq API key in Settings → My AI for unlimited ` +
+                    `access. Free quota resets at midnight.`
             });
         }
-        // Increment count atomically or merge
-        await usageDocRef.set({ count: currentCount + 1 }, { merge: true });
+        // Upsert increment
+        await supabaseAdmin.from('ai_usage').upsert({ user_id: userId, usage_date: today, count: current + 1 }, { onConflict: 'user_id,usage_date' });
         next();
     }
-    catch (error) {
-        console.error('[Credit Check Middleware] Error:', error.message);
-        // On unexpected Firestore errors, we still allow the user through but log a warning to ensure platform resilience
+    catch (err) {
+        // If quota check fails, let through rather than blocking the user
+        console.error('[CreditCheck] Failed:', err.message);
         next();
     }
 }

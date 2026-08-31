@@ -28,8 +28,8 @@ export default function ConfusionHelper({ projectId, initialQuery = '', onClose 
     if (!query.trim()) return;
     setIsLoading(true);
     try {
-      const data = await analyzeConfusion(query, projectId);
-      setExplanation(data);
+      const data = await analyzeConfusion(query);
+      setExplanation(typeof data === 'string' ? data : data.explanation || JSON.stringify(data));
     } catch (error) {
       console.error('Error analyzing confusion:', error);
     } finally {
