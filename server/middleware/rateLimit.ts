@@ -1,38 +1,23 @@
-import { Response, NextFunction } from 'express';
-import { AuthRequest } from './auth';
+const store = new Map<string, { count: number; resetAt: number }>();
 
-interface RateLimitData {
-  count: number;
-  resetTime: number;
-}
+export function rateLimit(max = 20, windowMs = 60_000) {
+  return (req: any, res: any, next: any) => {
+    const key = req.user?.id ?? req.ip ?? 'anon';
+    const now = Date.now();
+    const entry = store.get(key);
 
-const rateLimits = new Map<string, RateLimitData>();
+    if (!entry || now > entry.resetAt) {
+      store.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
 
-export function rateLimit(req: AuthRequest, res: Response, next: NextFunction) {
-  const uid = req.user?.uid;
-  if (!uid) {
-    return next();
-  }
+    if (entry.count >= max) {
+      return res.status(429).json({
+        error: 'Too many requests. Wait a moment before trying again.'
+      });
+    }
 
-  const now = Date.now();
-  const limitWindow = 60 * 1000; // 60 seconds
-  const maxRequests = 20;
-
-  let limitData = rateLimits.get(uid);
-
-  if (!limitData || now > limitData.resetTime) {
-    limitData = {
-      count: 1,
-      resetTime: now + limitWindow,
-    };
-    rateLimits.set(uid, limitData);
-    return next();
-  }
-
-  if (limitData.count >= maxRequests) {
-    return res.status(429).json({ error: 'Too many requests. Wait a moment.' });
-  }
-
-  limitData.count += 1;
-  next();
+    entry.count++;
+    next();
+  };
 }

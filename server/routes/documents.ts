@@ -1,202 +1,227 @@
-import { Router, Response } from 'express';
+import { Router } from 'express';
 import multer from 'multer';
-import { AuthRequest, authenticateToken } from '../middleware/auth';
-import { sanitizeText, chunkText, parsePdfBuffer } from '../services/pdf';
+import { v4 as uuidv4 } from 'uuid';
 import { YoutubeTranscript } from 'youtube-transcript';
+import { supabaseForUser } from '../services/supabaseAdmin.js';
+import { AuthRequest } from '../middleware/auth.js';
+import { parsePdfBuffer, sanitizeText, chunkText } from '../services/pdf.js';
 
 const router = Router();
-
-// Configure multer for memory storage, 15MB limit
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit
+  limits: { fileSize: 15 * 1024 * 1024 }
 });
 
-/**
- * POST /api/documents/upload
- * Process TXT and PDF uploads
- */
-router.post('/upload', authenticateToken, upload.single('file'), async (req: AuthRequest, res: Response) => {
+router.post('/upload', upload.single('file'), async (req: AuthRequest, res) => {
+  const file = req.file;
+  const projectId = req.body.projectId;
+
+  if (!file || !projectId) {
+    res.status(400).json({ error: 'Missing file or projectId.' });
+    return;
+  }
+
+  const extension = file.originalname.split('.').pop()?.toLowerCase();
+  if (extension !== 'pdf' && extension !== 'txt') {
+    res.status(400).json({ error: 'Only PDF and TXT files are accepted.' });
+    return;
+  }
+
   try {
-    const file = req.file;
-    if (!file) {
-      return res.status(400).json({ error: 'No file uploaded.' });
-    }
-
-    const title = file.originalname;
-    const extension = title.substring(title.lastIndexOf('.')).toLowerCase();
-
     let rawText = '';
-    let sourceType = '';
-
-    if (extension === '.pdf') {
-      try {
-        rawText = await parsePdfBuffer(file.buffer);
-        sourceType = 'pdf';
-      } catch (pdfErr: any) {
-        console.error('[PDF Parsing Error]:', pdfErr.message);
-        return res.status(422).json({ error: 'Failed to extract text from PDF. It may be scanned or corrupted.' });
-      }
-    } else if (extension === '.txt') {
-      rawText = file.buffer.toString('utf-8');
-      sourceType = 'txt';
+    if (extension === 'pdf') {
+      rawText = await parsePdfBuffer(file.buffer);
     } else {
-      return res.status(400).json({ error: 'Unsupported file type. Please upload a PDF or TXT file.' });
+      rawText = file.buffer.toString('utf-8');
     }
 
-    // Sanitize extracted text
-    const sanitized = sanitizeText(rawText);
-    if (!sanitized) {
-      return res.status(422).json({ error: 'No readable text could be extracted from this document.' });
+    const cleanText = sanitizeText(rawText);
+    if (!cleanText) {
+      res.status(422).json({
+        error: 'No readable text found. Ensure your PDF is text-searchable, not a scanned image.'
+      });
+      return;
     }
 
-    // Chunk text
-    const chunks = chunkText(sanitized);
+    const chunks = chunkText(cleanText);
+    const preview = cleanText.substring(0, 12000);
+    const filePath = `${req.user!.id}/${projectId}/${uuidv4()}-${file.originalname}`;
 
-    // Get first 12,000 chars of content for display/metadata preview
-    const previewContent = sanitized.substring(0, 12000);
+    const userSupabase = supabaseForUser(req.accessToken!);
 
-    return res.json({
-      title,
-      content: previewContent,
-      chunks,
-      source_type: sourceType
+    // Upload file to Supabase Storage bucket 'documents'
+    const { error: storageErr } = await userSupabase.storage
+      .from('documents')
+      .upload(filePath, file.buffer, { contentType: file.mimetype });
+
+    if (storageErr) {
+      console.error('[Storage Error]', storageErr.message);
+    }
+
+    // Insert record in documents table
+    const { data: docRecord, error: dbErr } = await userSupabase
+      .from('documents')
+      .insert({
+        project_id: projectId,
+        user_id: req.user!.id,
+        name: file.originalname,
+        content: preview,
+        chunks,
+        chunk_count: chunks.length,
+        source_type: extension,
+        file_path: filePath,
+        file_size: file.size
+      })
+      .select()
+      .single();
+
+    if (dbErr) {
+      res.status(500).json({ error: dbErr.message });
+      return;
+    }
+
+    res.json({
+      id: docRecord.id,
+      name: docRecord.name,
+      chunk_count: docRecord.chunk_count,
+      content_preview: docRecord.content
     });
   } catch (err: any) {
-    console.error('[Upload API] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'An error occurred during file processing.' });
+    res.status(500).json({ error: err.message || 'Failed to process document.' });
   }
 });
 
-/**
- * POST /api/documents/import-url
- * Imports contents of a Google Doc or Web Page
- */
-router.post('/import-url', authenticateToken, async (req: AuthRequest, res: Response) => {
-  try {
-    const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required.' });
-    }
+router.post('/import-url', async (req: AuthRequest, res) => {
+  const { url, projectId } = req.body;
+  if (!url || !projectId) {
+    res.status(400).json({ error: 'Missing url or projectId.' });
+    return;
+  }
 
+  try {
     let rawText = '';
-    let title = 'Imported Web Page';
-    let sourceType = 'url';
+    let name = 'Imported Webpage';
 
     if (url.includes('docs.google.com/document/d/')) {
-      // Google Doc URL
-      const docIdMatch = url.match(/\/d\/(.*?)(\/|$)/);
-      const docId = docIdMatch ? docIdMatch[1] : null;
-
-      if (!docId) {
-        return res.status(400).json({ error: 'Invalid Google Docs URL format.' });
-      }
-
+      const docId = url.split('/d/')[1].split('/')[0];
       const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
-      console.log(`[Import URL] Fetching Google Doc export: ${exportUrl}`);
-
       const response = await fetch(exportUrl);
-      if (!response.ok) {
-        return res.status(403).json({
-          error: 'Failed to access Google Doc. Please verify that link sharing is turned ON and set to "Anyone with the link can view".'
-        });
-      }
-
       rawText = await response.text();
-      title = `Google Doc: ${docId}`;
-      sourceType = 'google_doc';
+      name = 'Imported Google Doc';
     } else {
-      // General Web Page
-      console.log(`[Import URL] Fetching webpage: ${url}`);
       const response = await fetch(url);
-      if (!response.ok) {
-        return res.status(400).json({ error: `Failed to fetch webpage. Status: ${response.status}` });
-      }
-
       const html = await response.text();
-      // Simple HTML stripping
-      rawText = html
-        .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') // Remove scripts
-        .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')   // Remove styles
-        .replace(/<[^>]*>?/gm, ' ')                         // Remove other tags
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
-
-      try {
-        title = `Web Page: ${new URL(url).hostname}`;
-      } catch {
-        title = 'Web Page';
-      }
+      rawText = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ');
+      name = new URL(url).hostname;
     }
 
-    // Sanitize and chunk
-    const sanitized = sanitizeText(rawText);
-    if (!sanitized) {
-      return res.status(422).json({ error: 'Failed to extract meaningful text content from the URL.' });
+    const cleanText = sanitizeText(rawText);
+    if (!cleanText) {
+      res.status(422).json({ error: 'No readable text could be extracted from URL.' });
+      return;
     }
 
-    const chunks = chunkText(sanitized);
-    const previewContent = sanitized.substring(0, 12000);
+    const chunks = chunkText(cleanText);
+    const preview = cleanText.substring(0, 12000);
+    const userSupabase = supabaseForUser(req.accessToken!);
 
-    return res.json({
-      title,
-      content: previewContent,
-      chunks,
-      source_type: sourceType
+    const { data: docRecord, error: dbErr } = await userSupabase
+      .from('documents')
+      .insert({
+        project_id: projectId,
+        user_id: req.user!.id,
+        name,
+        content: preview,
+        chunks,
+        chunk_count: chunks.length,
+        source_type: 'url'
+      })
+      .select()
+      .single();
+
+    if (dbErr) {
+      res.status(500).json({ error: dbErr.message });
+      return;
+    }
+
+    res.json({
+      id: docRecord.id,
+      name: docRecord.name,
+      chunk_count: docRecord.chunk_count,
+      content_preview: docRecord.content
     });
   } catch (err: any) {
-    console.error('[Import URL API] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'An error occurred during URL import.' });
+    res.status(500).json({ error: err.message || 'Failed to import URL.' });
   }
 });
 
-/**
- * POST /api/youtube/transcript
- * Extract subtitles from a YouTube video
- */
-router.post('/youtube/transcript', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/youtube/transcript', async (req: AuthRequest, res) => {
+  const { url, projectId } = req.body;
+  if (!url) {
+    res.status(400).json({ error: 'Missing YouTube URL.' });
+    return;
+  }
+
   try {
-    const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ error: 'YouTube URL is required.' });
+    let videoId = '';
+    if (url.includes('youtu.be/')) {
+      videoId = url.split('youtu.be/')[1].split('?')[0];
+    } else if (url.includes('youtube.com/watch')) {
+      videoId = new URL(url).searchParams.get('v') || '';
+    } else if (url.includes('youtube.com/shorts/')) {
+      videoId = url.split('youtube.com/shorts/')[1].split('?')[0];
     }
 
-    // Extract video ID
-    // Supports: youtu.be/abc, youtube.com/watch?v=abc, youtube.com/shorts/abc, youtube.com/embed/abc
-    const videoIdMatch = url.match(/(?:v=|\/v\/|embed\/|youtu\.be\/|\/shorts\/)([^#&?]*).*/);
-    const videoId = videoIdMatch ? videoIdMatch[1] : null;
-
-    if (!videoId || videoId.length !== 11) {
-      return res.status(400).json({ error: 'Invalid YouTube URL or Video ID format.' });
+    if (!videoId) {
+      res.status(400).json({ error: 'Invalid YouTube URL.' });
+      return;
     }
 
-    console.log(`[YouTube Transcript] Fetching for videoId: ${videoId}`);
-    try {
-      const transcriptSegments = await YoutubeTranscript.fetchTranscript(videoId);
-      const joinedText = transcriptSegments.map(seg => seg.text).join(' ');
-      const sanitized = sanitizeText(joinedText);
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+    const fullText = transcriptItems.map(item => item.text).join(' ');
+    const cleanText = sanitizeText(fullText);
 
-      return res.json({
-        text: sanitized,
-        videoId
+    if (projectId) {
+      const chunks = chunkText(cleanText);
+      const userSupabase = supabaseForUser(req.accessToken!);
+      await userSupabase.from('documents').insert({
+        project_id: projectId,
+        user_id: req.user!.id,
+        name: `YouTube Transcript (${videoId})`,
+        content: cleanText.substring(0, 12000),
+        chunks,
+        chunk_count: chunks.length,
+        source_type: 'youtube'
       });
-    } catch (transcriptErr: any) {
-      console.error('[YouTube Transcript Engine Error]:', transcriptErr.message);
-
-      let friendlyMessage = 'Subtitles/transcript could not be retrieved for this video.';
-      if (transcriptErr.message?.includes('disabled')) {
-        friendlyMessage = 'Transcripts are disabled for this YouTube video.';
-      } else if (transcriptErr.message?.includes('not found') || transcriptErr.message?.includes('Could not find')) {
-        friendlyMessage = 'Could not find a transcript for this video. It may lack auto-generated captions.';
-      }
-
-      return res.status(422).json({ error: friendlyMessage });
     }
+
+    res.json({ text: cleanText, videoId });
   } catch (err: any) {
-    console.error('[YouTube API] Error:', err.message);
-    return res.status(500).json({ error: err.message || 'An error occurred during transcript retrieval.' });
+    res.status(500).json({ error: err.message || 'Failed to fetch YouTube transcript.' });
+  }
+});
+
+router.delete('/:id', async (req: AuthRequest, res) => {
+  const docId = req.params.id;
+  const userSupabase = supabaseForUser(req.accessToken!);
+
+  try {
+    const { data: doc } = await userSupabase
+      .from('documents')
+      .select('file_path')
+      .eq('id', docId)
+      .single();
+
+    if (doc?.file_path) {
+      await userSupabase.storage.from('documents').remove([doc.file_path]);
+    }
+
+    await userSupabase.from('documents').delete().eq('id', docId);
+    res.status(204).send();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

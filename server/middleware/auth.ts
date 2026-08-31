@@ -1,49 +1,44 @@
 import { Request, Response, NextFunction } from 'express';
-import admin from 'firebase-admin';
-import { verifyAuthToken } from '../routes/auth.js';
+import { supabaseAdmin } from '../services/supabaseAdmin.js';
 
 export interface AuthRequest extends Request {
-  user?: { uid: string; email?: string; displayName?: string };
-  userApiKeys?: { openaiKey?: string; anthropicKey?: string; deepseekKey?: string };
+  user?: { id: string; email?: string };
+  accessToken?: string;
+  userApiKeys?: { groqKey?: string };
 }
 
-export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+export async function authenticateToken(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  const token = req.headers.authorization?.split('Bearer ')[1];
 
   if (!token) {
-    return res.status(401).json({ error: 'Authorization token is missing.' });
+    res.status(401).json({ error: 'Not authenticated. Please sign in.' });
+    return;
   }
 
-  // 1. Try custom JWT auth token verification first
-  const customUser = verifyAuthToken(token);
-  if (customUser) {
-    req.user = customUser;
-    req.userApiKeys = {
-      openaiKey: req.headers['x-openai-key'] as string | undefined,
-      anthropicKey: req.headers['x-anthropic-key'] as string | undefined,
-      deepseekKey: req.headers['x-deepseek-key'] as string | undefined,
-    };
-    return next();
-  }
-
-  // 2. Fallback to Firebase ID Token verification if custom token verification failed
   try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = {
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-    };
+    // Verify JWT with Supabase — this is the Supabase equivalent of
+    // Firebase Admin verifyIdToken()
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
+    if (error || !user) {
+      res.status(401).json({ error: 'Invalid or expired session. Sign in again.' });
+      return;
+    }
+
+    req.user = { id: user.id, email: user.email };
+    req.accessToken = token;
+
+    // Session-only user model keys — never stored
     req.userApiKeys = {
-      openaiKey: req.headers['x-openai-key'] as string | undefined,
-      anthropicKey: req.headers['x-anthropic-key'] as string | undefined,
-      deepseekKey: req.headers['x-deepseek-key'] as string | undefined,
+      groqKey: req.headers['x-groq-key'] as string | undefined,
     };
 
-    return next();
-  } catch (error: any) {
-    console.error('[Auth Middleware] Verification failed:', error.message);
-    return res.status(401).json({ error: 'Authorization token is invalid or expired.' });
+    next();
+  } catch (err: any) {
+    res.status(401).json({ error: 'Authentication failed.' });
   }
 }

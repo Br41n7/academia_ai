@@ -2,11 +2,10 @@ import { z } from 'zod';
 
 export const quizSchema = z.object({
   questions: z.array(z.object({
-    id: z.string(),
-    type: z.enum(['multiple_choice', 'true_false', 'fill_blank']),
+    id: z.string().optional(),
     question: z.string(),
-    options: z.array(z.string()).nullable().optional(),
-    correct_answer: z.string(),
+    options: z.array(z.string()),
+    correctAnswer: z.string(),
     explanation: z.string()
   }))
 });
@@ -17,65 +16,58 @@ export const mnemonicSchema = z.object({
 });
 
 export const battleSchema = z.object({
-  concepts: z.array(z.string()),
+  conceptA: z.string(),
+  conceptB: z.string(),
+  winner: z.string().optional(),
   comparison: z.array(z.object({
     feature: z.string(),
-    concept1: z.string(),
-    concept2: z.string()
-  })),
-  analogy: z.string(),
-  scenario: z.string(),
-  quiz_question: z.object({
-    question: z.string(),
-    options: z.array(z.string()),
-    correct_answer: z.string(),
-    explanation: z.string()
-  }).nullable().optional()
+    a: z.string(),
+    b: z.string()
+  })).optional()
 });
 
 export const storyboardSchema = z.object({
-  title: z.string(),
-  scenes: z.array(z.object({
-    scene_number: z.number(),
-    narrative: z.string(),
-    visual_description: z.string(),
-    key_takeaway: z.string()
+  panels: z.array(z.object({
+    panelNumber: z.number().optional(),
+    description: z.string(),
+    dialogue: z.string().optional()
   }))
 });
 
 export const snapSolveSchema = z.object({
-  problem: z.string(),
-  steps: z.array(z.string()),
-  final_answer: z.string(),
-  explanation: z.string()
+  problemText: z.string(),
+  solutionSteps: z.array(z.string()),
+  finalAnswer: z.string()
 });
 
 export const shortcutSchema = z.object({
-  concept: z.string(),
-  rule: z.string(),
-  example: z.string()
+  shortcutText: z.string(),
+  explanation: z.string()
 });
 
 export const livingConceptSchema = z.object({
-  concept_name: z.string(),
-  real_world_analogy: z.string(),
-  interactive_metaphor: z.string()
+  concept: z.string(),
+  explanation: z.string(),
+  analogy: z.string().optional()
 });
 
-export const researchValidatorSchema = z.object({
+export const researchSchema = z.object({
+  title: z.string().optional(),
+  summary: z.string().optional(),
   entities: z.array(z.object({
     name: z.string(),
     category: z.string(),
-    relevance: z.string()
-  })).optional(),
-  answer: z.string().optional(),
-  sources: z.array(z.object({
-    title: z.string(),
-    excerpt: z.string()
+    relevance: z.string().optional()
   })).optional()
 });
 
-export const SCHEMAS: Record<string, z.ZodSchema> = {
+export const courseSchema = z.object({
+  title: z.string(),
+  description: z.string(),
+  modules: z.array(z.any())
+});
+
+const SCHEMAS: Record<string, z.ZodSchema> = {
   quiz: quizSchema,
   mnemonic: mnemonicSchema,
   battle: battleSchema,
@@ -83,81 +75,58 @@ export const SCHEMAS: Record<string, z.ZodSchema> = {
   snap_solve: snapSolveSchema,
   shortcut: shortcutSchema,
   living_concept: livingConceptSchema,
-  research_validator: researchValidatorSchema
+  research: researchSchema,
+  course: courseSchema
 };
 
-export interface ParsedResult {
-  success: boolean;
-  data: any;
-  error?: string;
-}
-
-export function validateOutput(raw: string, schemaName: string): ParsedResult {
-  const schema = SCHEMAS[schemaName];
-  if (!schema) {
-    return { success: false, data: null, error: `Schema ${schemaName} not found.` };
-  }
-
+export function validateOutput(raw: string, schemaName: string): { success: boolean; data?: any; error?: string } {
   try {
-    // 1. Strip markdown code fences (```json ... ```)
-    let cleaned = raw.trim();
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/g, '');
-      cleaned = cleaned.replace(/\n?```$/g, '');
-      cleaned = cleaned.trim();
+    let clean = raw.trim();
+    if (clean.startsWith('```json')) {
+      clean = clean.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (clean.startsWith('```')) {
+      clean = clean.replace(/^```\s*/, '').replace(/\s*```$/, '');
     }
 
-    // 2. Parse JSON
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(clean);
+    const schema = SCHEMAS[schemaName];
 
-    // 3. Run safe validation
-    const parsedRes = schema.safeParse(parsed);
-    if (!parsedRes.success) {
-      return {
-        success: false,
-        data: parsed,
-        error: parsedRes.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
-      };
+    if (!schema) {
+      return { success: true, data: parsed };
     }
 
-    return { success: true, data: parsedRes.data };
+    const result = schema.safeParse(parsed);
+    if (result.success) {
+      return { success: true, data: result.data };
+    } else {
+      return { success: false, error: result.error.message };
+    }
   } catch (err: any) {
-    return { success: false, data: null, error: `JSON Parse error: ${err.message}` };
+    return { success: false, error: err.message };
   }
 }
 
-export function checkRelevance(originalPrompt: string, response: string): boolean {
-  if (!originalPrompt) return true;
+export function checkRelevance(prompt: string, response: string): boolean {
+  if (!prompt || !response) return true;
 
-  const stopWords = new Set([
-    'the', 'is', 'at', 'which', 'on', 'a', 'an', 'and', 'to', 'for', 'in', 'of', 'with', 'by',
-    'or', 'about', 'your', 'my', 'me', 'i', 'you', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'do', 'does', 'did', 'but', 'if', 'then', 'else', 'from', 'this', 'that'
-  ]);
+  const stopWords = new Set(['what', 'when', 'where', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once']);
 
-  // Extract unique significant words from prompt
-  const promptWords = originalPrompt
+  const words = prompt
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/[^\w\s]/g, '')
     .split(/\s+/)
-    .filter(w => w.length >= 3 && !stopWords.has(w));
+    .filter(w => w.length > 3 && !stopWords.has(w));
 
-  const uniquePromptWords = Array.from(new Set(promptWords));
-  if (uniquePromptWords.length === 0) {
-    return true; // If no significant words, consider it relevant
-  }
+  if (words.length === 0) return true;
 
-  const responseLower = response.toLowerCase();
-  let matchedCount = 0;
+  const responseText = response.toLowerCase();
+  let matches = 0;
 
-  for (const word of uniquePromptWords) {
-    if (responseLower.includes(word)) {
-      matchedCount++;
+  for (const word of words) {
+    if (responseText.includes(word)) {
+      matches++;
     }
   }
 
-  const overlapRatio = matchedCount / uniquePromptWords.length;
-  console.log(`[Relevance Check] Words matched: ${matchedCount}/${uniquePromptWords.length} (${(overlapRatio * 100).toFixed(1)}%)`);
-
-  return overlapRatio >= 0.1; // minimum 10% keyword overlap
+  return (matches / words.length) >= 0.10;
 }

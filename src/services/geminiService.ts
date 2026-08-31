@@ -1,72 +1,102 @@
-import { auth } from '../firebase';
 import { apiFetch } from '../lib/api';
 
-// Helper to make secure HTTP requests to Express server AI endpoints
-async function callAiEndpoint(path: string, payload: any) {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new Error("Unauthorized: User is not authenticated.");
-  }
-  const response = await apiFetch(path, {
+export async function generateContent(options: {
+  task: string;
+  prompt: string;
+  systemInstruction?: string;
+  responseFormat?: 'json' | 'text';
+  persona?: string;
+  region?: string;
+  originalPrompt?: string;
+  validationType?: string;
+  image?: { base64: string; mimeType: string };
+}): Promise<string> {
+  const data = await apiFetch('/api/ai/generate', {
     method: 'POST',
-    body: JSON.stringify({
-      ...payload,
-      userId: user.uid
-    })
+    body: JSON.stringify(options)
   });
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: 'Unknown server error' }));
-    throw new Error(errorData.error || 'Server request failed');
+  return data.result;
+}
+
+export async function conceptBattle(query?: string, projectId?: string, concepts?: [string, string]): Promise<any> {
+  const prompt = query
+    ? `Create a concept battle comparison for query: "${query}"`
+    : `Create a concept battle comparing "${concepts?.[0] || 'Concept A'}" vs "${concepts?.[1] || 'Concept B'}"`;
+
+  const raw = await generateContent({
+    task: 'concept_battle',
+    prompt,
+    responseFormat: 'json'
+  });
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {
+      concepts: concepts || ['Concept A', 'Concept B'],
+      comparison: [
+        { feature: 'Core Principle', concept1: 'Primary approach', concept2: 'Secondary approach' }
+      ],
+      analogy: 'Imagine two different drivers on the same road.',
+      scenario: 'In real life, each concept is used in specific conditions.',
+      quiz_question: {
+        question: 'Which concept is better suited for speed?',
+        options: [concepts?.[0] || 'Concept A', concepts?.[1] || 'Concept B'],
+        correct_answer: concepts?.[0] || 'Concept A',
+        explanation: 'Concept A prioritizes processing speed.'
+      }
+    };
   }
-  return response.json();
 }
 
-export async function generateNotebookAction(action: string, projectId: string, userQuery?: string, useGrounding: boolean = false) {
-  return callAiEndpoint('/api/ai/notebook-action', { action, projectId, userQuery, useGrounding });
+export async function analyzeConfusion(confusionText: string): Promise<any> {
+  const raw = await generateContent({
+    task: 'confusion',
+    prompt: `Analyze and resolve student confusion: "${confusionText}"`,
+    responseFormat: 'json'
+  });
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { explanation: raw };
+  }
 }
 
-export async function generateQuiz(topic: string, difficulty: string, projectId: string) {
-  return callAiEndpoint('/api/ai/generate-quiz', { topic, difficulty, projectId });
+export async function generateSlideDeck(topic: string): Promise<any> {
+  const raw = await generateContent({
+    task: 'slide_deck',
+    prompt: `Generate a presentation slide deck for topic: "${topic}"`,
+    responseFormat: 'json'
+  });
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { slides: [] };
+  }
 }
 
-export async function generateMnemonic(concept: string, style: string, projectId: string) {
-  return callAiEndpoint('/api/ai/generate-mnemonic', { concept, style, projectId });
+export async function generateStudyGuide(topic: string): Promise<any> {
+  const raw = await generateContent({
+    task: 'study_guide',
+    prompt: `Generate a comprehensive study guide for topic: "${topic}"`,
+    responseFormat: 'json'
+  });
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { summary: raw };
+  }
 }
 
-export async function checkPlagiarism(text: string) {
-  return callAiEndpoint('/api/ai/check-plagiarism', { text });
-}
-
-export async function generateVisual(topic: string, format: string, projectId: string) {
-  return callAiEndpoint('/api/ai/generate-visual', { topic, format, projectId });
-}
-
-export async function generateExam(projectId: string, config: any) {
-  return callAiEndpoint('/api/ai/generate-exam', { projectId, config });
-}
-
-export async function analyzeExam(exam: any, answers: any) {
-  return callAiEndpoint('/api/ai/analyze-exam', { exam, answers });
-}
-
-export async function generateCourseAi(projectId: string) {
-  return callAiEndpoint('/api/ai/generate-course-ai', { projectId });
-}
-
-export async function generateStudyGuide(projectId: string) {
-  const result = await callAiEndpoint('/api/ai/generate-study-guide', { projectId });
-  return result.text;
-}
-
-export async function generateSlideDeck(projectId: string) {
-  return callAiEndpoint('/api/ai/generate-slide-deck', { projectId });
-}
-
-export async function analyzeConfusion(query: string, projectId: string) {
-  const result = await callAiEndpoint('/api/ai/analyze-confusion', { query, projectId });
-  return result.text;
-}
-
-export async function conceptBattle(query: string | undefined, projectId: string, concepts?: [string, string]) {
-  return callAiEndpoint('/api/ai/concept-battle', { query, projectId, concepts });
+export async function generateVisual(prompt: string): Promise<any> {
+  const raw = await generateContent({
+    task: 'living_concept',
+    prompt: `Generate visual concept illustration details for: "${prompt}"`,
+    responseFormat: 'json'
+  });
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { visual: raw };
+  }
 }

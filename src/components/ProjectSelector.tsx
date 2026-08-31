@@ -1,16 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Folder, Calendar, ArrowRight, BookOpen, Search } from 'lucide-react';
-import { motion } from 'motion/react';
-import { cn } from '../lib/utils';
-import { db, collection, onSnapshot, query, where, orderBy, setDoc, doc, handleFirestoreError, OperationType } from '../firebase';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '../lib/supabase';
+import { apiFetch } from '../lib/api';
+import { FolderPlus, BookOpen, Trash2, Users, Share2, Plus, Sparkles } from 'lucide-react';
 
 interface Project {
   id: string;
   name: string;
   description: string;
-  created_at: string;
 }
 
 interface ProjectSelectorProps {
@@ -20,252 +16,192 @@ interface ProjectSelectorProps {
 
 export default function ProjectSelector({ onSelect, user }: ProjectSelectorProps) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    if (!user) return;
-
-    if (isSupabaseConfigured && supabase) {
-      setIsLoading(true);
-      supabase
+  const fetchProjects = async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch('/api/projects');
+      setProjects(data || []);
+    } catch (err) {
+      console.error('Failed to fetch projects:', err);
+      // Fallback query directly using Supabase if server API is launching
+      const { data } = await supabase
         .from('projects')
         .select('*')
-        .eq('user_id', user.uid)
-        .order('created_at', { ascending: false })
-        .then(({ data, error }) => {
-          if (data) {
-            setProjects(data as Project[]);
-          }
-          setIsLoading(false);
-        });
-
-      const channel = supabase
-        .channel('public:projects')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `user_id=eq.${user.uid}` }, () => {
-          supabase
-            .from('projects')
-            .select('*')
-            .eq('user_id', user.uid)
-            .order('created_at', { ascending: false })
-            .then(({ data }) => {
-              if (data) setProjects(data as Project[]);
-            });
-        })
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    } else {
-      const q = query(
-        collection(db, 'projects'),
-        where('user_id', '==', user.uid),
-        orderBy('created_at', 'desc')
-      );
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const projectsList = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Project[];
-        setProjects(projectsList);
-        setIsLoading(false);
-      }, (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'projects');
-        setIsLoading(false);
-      });
-
-      return () => unsubscribe();
+        .order('created_at', { ascending: false });
+      setProjects(data as Project[] || []);
+    } finally {
+      setLoading(false);
     }
-  }, [user]);
+  };
 
-  const filteredProjects = projects.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  useEffect(() => {
+    fetchProjects();
+  }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !user) return;
+    if (!name.trim() || creating) return;
 
-    const projectId = uuidv4();
-    const newProject = {
-      id: projectId,
-      name: newName,
-      description: newDesc,
-      user_id: user.uid,
-      created_at: new Date().toISOString()
-    };
+    setCreating(true);
+    try {
+      const newProj = await apiFetch('/api/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name, description })
+      });
+      setShowNewModal(false);
+      setName('');
+      setDescription('');
+      fetchProjects();
+      if (newProj) onSelect(newProj);
+    } catch (err) {
+      console.error('Error creating project:', err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteProject = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this workspace?')) return;
 
     try {
-      if (isSupabaseConfigured && supabase) {
-        const { error } = await supabase
-          .from('projects')
-          .insert({
-            id: projectId,
-            name: newName,
-            description: newDesc,
-            user_id: user.uid
-          });
-        if (error) throw error;
-      } else {
-        await setDoc(doc(db, 'projects', projectId), newProject);
-      }
-      setIsCreating(false);
-      setNewName('');
-      setNewDesc('');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'projects');
+      await apiFetch(`/api/projects/${id}`, { method: 'DELETE' });
+      setProjects(projects.filter(p => p.id !== id));
+    } catch (err) {
+      console.error('Error deleting project:', err);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#050505] p-8">
-      <div className="max-w-6xl mx-auto space-y-12">
-        <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-4 flex-1">
-            <div className="space-y-2">
-              <h1 className="text-5xl font-bold tracking-tight">My Projects</h1>
-              <p className="text-gray-500 text-lg">Select a workspace to start learning.</p>
-            </div>
-            <div className="relative max-w-md">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search projects..."
-                className="w-full bg-white dark:bg-[#111111] border border-black/5 dark:border-white/5 rounded-2xl py-3 pl-12 pr-4 focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
-              />
-            </div>
+    <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#0A0A0A] p-6 flex flex-col items-center justify-center">
+      <div className="max-w-4xl w-full space-y-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Workspaces</h1>
+            <p className="text-gray-500 text-sm">Select or create a study project workspace</p>
           </div>
           <button
-            onClick={() => setIsCreating(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-black dark:bg-white text-white dark:text-black rounded-full font-bold hover:scale-105 transition-all shadow-lg shrink-0"
+            onClick={() => setShowNewModal(true)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold shadow-md transition-all"
           >
-            <Plus size={20} />
-            New Project
+            <Plus size={18} />
+            New Workspace
           </button>
-        </header>
+        </div>
 
-        {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-64 bg-white dark:bg-[#111111] rounded-3xl animate-pulse border border-black/5 dark:border-white/5" />
-            ))}
+        {loading ? (
+          <div className="flex justify-center p-12">
+            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : filteredProjects.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32 space-y-6 bg-white dark:bg-[#111111] rounded-[3rem] border border-black/5 dark:border-white/5">
-            <div className="w-20 h-20 bg-gray-100 dark:bg-white/5 rounded-full flex items-center justify-center text-gray-400">
-              <Folder size={40} />
+        ) : projects.length === 0 ? (
+          <div className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+            <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+              <BookOpen size={32} />
             </div>
-            <div className="text-center space-y-2">
-              <h3 className="text-2xl font-bold">{searchQuery ? 'No results found' : 'No projects yet'}</h3>
-              <p className="text-gray-500">
-                {searchQuery ? `We couldn't find any projects matching "${searchQuery}"` : 'Create your first project to start organizing your study materials.'}
-              </p>
-            </div>
-            {!searchQuery && (
-              <button
-                onClick={() => setIsCreating(true)}
-                className="px-8 py-4 bg-indigo-600 text-white rounded-full font-bold hover:bg-indigo-700 transition-all"
-              >
-                Get Started
-              </button>
-            )}
+            <h3 className="text-lg font-semibold">No workspaces yet</h3>
+            <p className="text-gray-500 text-sm max-w-sm mx-auto">
+              Create your first study workspace to manage documents, quizzes, and notes.
+            </p>
+            <button
+              onClick={() => setShowNewModal(true)}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold shadow-md"
+            >
+              <Plus size={18} />
+              Create Workspace
+            </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {filteredProjects.map((project) => (
-              <motion.button
-                key={project.id}
-                whileHover={{ y: -8 }}
-                onClick={() => onSelect(project)}
-                className="group relative flex flex-col text-left bg-white dark:bg-[#111111] p-8 rounded-[2.5rem] border border-black/5 dark:border-white/5 hover:border-indigo-500/50 transition-all shadow-sm hover:shadow-2xl"
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {projects.map(proj => (
+              <div
+                key={proj.id}
+                onClick={() => onSelect(proj)}
+                className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/5 hover:border-indigo-500/50 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between"
               >
-                <div className="mb-6 w-14 h-14 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
-                  <BookOpen size={28} />
-                </div>
-                <div className="flex-1 space-y-2">
-                  <h3 className="text-2xl font-bold group-hover:text-indigo-600 transition-colors">{project.name}</h3>
-                  <p className="text-gray-500 line-clamp-2 text-sm leading-relaxed">{project.description || 'No description provided.'}</p>
-                </div>
-                <div className="mt-8 pt-6 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-gray-400">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={14} />
-                    {new Date(project.created_at).toLocaleDateString()}
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center">
+                      <BookOpen size={20} />
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteProject(proj.id, e)}
+                      className="text-gray-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
-                  <ArrowRight size={16} className="group-hover:translate-x-2 transition-transform text-indigo-600" />
+                  <h3 className="font-bold text-lg group-hover:text-indigo-600 transition-colors">
+                    {proj.name}
+                  </h3>
+                  <p className="text-gray-500 text-sm line-clamp-2">
+                    {proj.description || 'No description provided.'}
+                  </p>
                 </div>
-              </motion.button>
+                <div className="pt-4 text-xs font-semibold text-indigo-600 flex items-center gap-1 mt-4">
+                  Open Workspace &rarr;
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </div>
 
-      {/* Create Modal */}
-      {isCreating && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            onClick={() => setIsCreating(false)}
-            className="absolute inset-0 bg-black/60 backdrop-blur-xl"
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative w-full max-w-lg bg-white dark:bg-[#111111] rounded-[3rem] p-10 shadow-2xl space-y-8"
-          >
-            <div className="space-y-2">
-              <h2 className="text-3xl font-bold">New Project</h2>
-              <p className="text-gray-500">Give your workspace a name and description.</p>
+        {showNewModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-zinc-900 rounded-3xl p-6 max-w-md w-full space-y-4 border border-black/5 dark:border-white/5 shadow-2xl">
+              <h2 className="text-xl font-bold">Create New Workspace</h2>
+              <form onSubmit={handleCreateProject} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
+                    Workspace Name
+                  </label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Organic Chemistry 101"
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-800 text-sm focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-500 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Optional details about this subject or course..."
+                    rows={3}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-zinc-800 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewModal(false)}
+                    className="px-4 py-2.5 text-sm font-semibold text-gray-500 hover:text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creating}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold shadow-md disabled:opacity-50"
+                  >
+                    {creating ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
+              </form>
             </div>
-            <form onSubmit={handleCreate} className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400">Project Name</label>
-                <input
-                  autoFocus
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g., Quantum Physics"
-                  className="w-full bg-gray-50 dark:bg-white/5 border-none rounded-2xl p-4 text-lg focus:ring-2 focus:ring-indigo-500 transition-all"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-400">Description</label>
-                <textarea
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="What are you studying in this project?"
-                  className="w-full bg-gray-50 dark:bg-white/5 border-none rounded-2xl p-4 min-h-[120px] focus:ring-2 focus:ring-indigo-500 transition-all resize-none"
-                />
-              </div>
-              <div className="flex gap-4 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsCreating(false)}
-                  className="flex-1 px-6 py-4 font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 rounded-2xl transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!newName.trim()}
-                  className="flex-1 px-6 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-500/20"
-                >
-                  Create Project
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

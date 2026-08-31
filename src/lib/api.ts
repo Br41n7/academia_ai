@@ -1,34 +1,42 @@
-import { auth } from '../firebase';
+import { supabase } from './supabase';
 
-export async function apiFetch(path: string, options: RequestInit = {}) {
-  let token = localStorage.getItem('customAuthToken');
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
-  if (!token && auth.currentUser) {
-    try {
-      token = await auth.currentUser.getIdToken();
-    } catch {
-      // Ignore firebase token error if unused
-    }
-  }
+export async function apiFetch(
+  path: string,
+  options: RequestInit = {},
+  extraHeaders: Record<string, string> = {}
+) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
 
   const headers: Record<string, string> = {
-    ...(options.headers as Record<string, string> || {}),
+    ...((options.headers as Record<string, string>) || {}),
+    ...extraHeaders,
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  // Only default to application/json if body is NOT FormData
-  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+  // Only set Content-Type for non-FormData requests
+  if (!(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
   }
 
-  // Forward user model keys from sessionStorage (session preference only)
-  const keys = JSON.parse(sessionStorage.getItem('userApiKeys') || '{}');
-  if (keys.openaiKey) headers['x-openai-key'] = keys.openaiKey;
-  if (keys.anthropicKey) headers['x-anthropic-key'] = keys.anthropicKey;
-  if (keys.deepseekKey) headers['x-deepseek-key'] = keys.deepseekKey;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  return fetch(path, { ...options, headers });
+  // Forward session-only user model keys
+  try {
+    const keys = JSON.parse(sessionStorage.getItem('academia_keys') || '{}');
+    if (keys.groqKey) headers['x-groq-key'] = keys.groqKey;
+  } catch {}
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(err.error || `Request failed: ${response.status}`);
+  }
+
+  return response.json();
 }
