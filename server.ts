@@ -33,6 +33,7 @@ app.get('/api/health', (_req, res) => {
     env: IS_PROD ? 'production' : 'development',
     gemini: !!process.env.GEMINI_API_KEY,
     groq: !!process.env.GROQ_API_KEY,
+    deepseek: !!process.env.DEEPSEEK_API_KEY,
     ts: new Date().toISOString()
   });
 });
@@ -113,9 +114,10 @@ async function startServer() {
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅  Academia AI  |  http://localhost:${PORT}`);
-    console.log(`   Gemini:  ${process.env.GEMINI_API_KEY ? '✓' : '✗ MISSING'}`);
-    console.log(`   Groq:    ${process.env.GROQ_API_KEY ? '✓' : '✗ MISSING'}`);
-    console.log(`   Env:     ${IS_PROD ? 'production' : 'development'}\n`);
+    console.log(`   Gemini:    ${process.env.GEMINI_API_KEY ? '✓' : '✗ MISSING'}`);
+    console.log(`   Groq:      ${process.env.GROQ_API_KEY ? '✓' : '✗ MISSING'}`);
+    console.log(`   DeepSeek:  ${process.env.DEEPSEEK_API_KEY ? '✓' : '✗ MISSING'}`);
+    console.log(`   Env:       ${IS_PROD ? 'production' : 'development'}\n`);
   });
 }
 

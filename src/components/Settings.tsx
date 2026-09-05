@@ -29,6 +29,7 @@ interface HealthData {
   status: string;
   gemini: boolean;
   groq: boolean;
+  deepseek: boolean;
 }
 
 export default function Settings() {
@@ -86,7 +87,6 @@ export default function Settings() {
           const healthRes = await apiFetch('/api/health');
           setHealth(healthRes);
         } catch {
-          // Fallback direct fetch if health bypasses auth
           try {
             const res = await fetch('/api/health');
             const data = await res.json();
@@ -247,7 +247,7 @@ export default function Settings() {
             <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
               Preferred Model Family
             </label>
-            <div className="flex items-center gap-6">
+            <div className="flex flex-wrap items-center gap-6">
               <label className="flex items-center gap-2 cursor-pointer text-sm">
                 <input
                   type="radio"
@@ -269,6 +269,17 @@ export default function Settings() {
                   className="text-indigo-600 focus:ring-indigo-500"
                 />
                 Groq (Llama 3.3 70B)
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="radio"
+                  name="preferred_model"
+                  value="deepseek"
+                  checked={profile.preferred_model === 'deepseek'}
+                  onChange={(e) => setProfile({ ...profile, preferred_model: e.target.value })}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                DeepSeek Chat
               </label>
             </div>
           </div>
@@ -303,7 +314,7 @@ export default function Settings() {
             <Activity size={18} className="text-indigo-600" />
             System & Quota Status
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
             <div className="p-3 bg-gray-50 dark:bg-zinc-800 rounded-xl">
               <p className="text-xs text-gray-500">Supabase DB</p>
               <p className={`font-semibold text-sm ${supabaseConnected ? 'text-emerald-600' : 'text-rose-500'}`}>
@@ -323,7 +334,13 @@ export default function Settings() {
               </p>
             </div>
             <div className="p-3 bg-gray-50 dark:bg-zinc-800 rounded-xl">
-              <p className="text-xs text-gray-500">Your AI Usage Today</p>
+              <p className="text-xs text-gray-500">DeepSeek AI</p>
+              <p className={`font-semibold text-sm ${health?.deepseek ? 'text-emerald-600' : 'text-amber-500'}`}>
+                {health?.deepseek ? 'Active' : 'Missing Key'}
+              </p>
+            </div>
+            <div className="p-3 bg-gray-50 dark:bg-zinc-800 rounded-xl">
+              <p className="text-xs text-gray-500">Your Usage Today</p>
               <p className="font-semibold text-sm text-indigo-600">
                 {groqKey ? 'Unlimited (BYOK)' : `${profile.todayUsage ?? 0} / 20`}
               </p>

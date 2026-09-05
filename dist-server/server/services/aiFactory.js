@@ -12,16 +12,16 @@ const GEMINI_TASKS = [
 ];
 export async function executeAI(options) {
     const { task, prompt, systemInstruction, responseFormat, image, userKeys } = options;
-    // Vision tasks always go to Gemini (Groq has no vision support)
+    // Vision tasks always go to Gemini (Groq/DeepSeek no vision support here)
     const needsVision = !!image;
     const primaryProvider = (needsVision || GEMINI_TASKS.includes(task))
         ? 'gemini'
         : 'groq';
     const errors = [];
-    // Try primary provider first, then fallback
+    // Provider fallback order: Primary -> Secondary -> DeepSeek
     const providerOrder = primaryProvider === 'gemini'
-        ? ['gemini', 'groq']
-        : ['groq', 'gemini'];
+        ? ['gemini', 'groq', 'deepseek']
+        : ['groq', 'gemini', 'deepseek'];
     for (const provider of providerOrder) {
         try {
             if (provider === 'gemini') {
@@ -72,6 +72,39 @@ export async function executeAI(options) {
                 const text = completion.choices[0]?.message?.content;
                 if (!text)
                     throw new Error('Empty response from Groq');
+                return text;
+            }
+            if (provider === 'deepseek') {
+                const key = process.env.DEEPSEEK_API_KEY;
+                if (!key) {
+                    errors.push('DeepSeek: no key');
+                    continue;
+                }
+                const response = await fetch('https://api.deepseek.com/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${key}`
+                    },
+                    body: JSON.stringify({
+                        model: 'deepseek-chat',
+                        messages: [
+                            { role: 'system', content: systemInstruction },
+                            { role: 'user', content: prompt }
+                        ],
+                        response_format: responseFormat === 'json' ? { type: 'json_object' } : undefined,
+                        max_tokens: 4096,
+                        temperature: 0.7
+                    })
+                });
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.error?.message || `HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                const text = data.choices?.[0]?.message?.content;
+                if (!text)
+                    throw new Error('Empty response from DeepSeek');
                 return text;
             }
         }
